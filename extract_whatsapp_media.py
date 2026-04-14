@@ -50,6 +50,47 @@ _libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 WHATSAPP_DOMAIN = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared"
 
+# ---------------------------------------------------------------------------
+# File type definitions
+# ---------------------------------------------------------------------------
+
+FILE_TYPES: dict[str, frozenset[str]] = {
+    'img': frozenset({
+        '.jpg', '.jpeg', '.png', '.webp', '.heic', '.tiff', '.bmp',
+    }),
+    'gif': frozenset({
+        '.gif',
+    }),
+    'video': frozenset({
+        '.mp4', '.mov', '.avi', '.mkv', '.3gp', '.m4v', '.wmv',
+    }),
+    'audio': frozenset({
+        '.opus', '.mp3', '.m4a', '.aac', '.ogg', '.wav', '.amr', '.flac',
+    }),
+    'doc': frozenset({
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.xltx', '.xltm',
+        '.ppt', '.pptx', '.txt', '.csv', '.zip', '.rar', '.bz2', '.7z',
+        '.html', '.json', '.xml', '.yml', '.yaml',
+        '.odt', '.ods', '.odp', '.pages', '.numbers', '.key',
+        '.epub', '.msg', '.psd', '.aep', '.sql',
+    }),
+}
+
+# All known extensions across every type
+ALL_KNOWN_EXTENSIONS: frozenset[str] = frozenset().union(*FILE_TYPES.values())
+
+# Documents go to a dedicated folder so they don't pollute iCloud Photos imports
+DOCS_FOLDER = '_Documents'
+
+
+def get_file_type(ext: str) -> str | None:
+    """Returns the type name for a file extension, or None if unknown/junk."""
+    ext = ext.lower()
+    for type_name, extensions in FILE_TYPES.items():
+        if ext in extensions:
+            return type_name
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -155,6 +196,7 @@ def set_rich_metadata(
     contact_name: str,
     jid: str,
     direction: str = 'received',
+    ftype: str | None = None,
 ) -> None:
     """
     Writes rich metadata to the file:
@@ -177,13 +219,16 @@ def set_rich_metadata(
     description  = f'WhatsApp · {chat_type}: {display_name} · {date_human}'
     phone        = phone_from_jid(jid)
     keywords     = ['WhatsApp', chat_type, display_name, phone, direction]
+    if ftype:
+        keywords.append(ftype)
     if dt:
         keywords.append(dt.strftime('%Y'))
         keywords.append(dt.strftime('%Y-%m'))
 
     comment_json = json.dumps({
         'source':    'WhatsApp',
-        'type':      chat_type.lower(),
+        'chat_type': chat_type.lower(),
+        'file_type': ftype,
         'contact':   display_name,
         'phone':     phone,
         'jid':       jid,
@@ -349,33 +394,34 @@ def inspect_db(chat_conn: sqlite3.Connection) -> None:
     print()
 
 
-def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
+def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, str, int]]:
     """
-    Returns {filename: (apple_timestamp, direction)} where direction is
-    'sent' (you sent it) or 'received' (sent by the contact).
+    Returns {filename: (apple_timestamp, direction, message_type)} where:
+      - direction    : 'sent' or 'received'
+      - message_type : ZMESSAGETYPE value (1=image, 3=video, 15=gif, 7=doc, etc.)
 
-    Strategy 1: JOIN ZWAMEDIAITEM -> ZWAMESSAGE for accurate send date + direction.
+    Strategy 1: JOIN ZWAMEDIAITEM -> ZWAMESSAGE (accurate date + direction + type).
     Strategy 2: ZMEDIAURLDATE directly from ZWAMEDIAITEM as a fallback.
     """
-    info_map: dict[str, tuple[float, str]] = {}
+    info_map: dict[str, tuple[float, str, int]] = {}
 
-    # Strategy 1: JOIN for send date and direction
+    # Strategy 1: JOIN for date, direction and message type
     try:
         rows = chat_conn.execute("""
-            SELECT mi.ZMEDIALOCALPATH, m.ZMESSAGEDATE, m.ZISFROMME
+            SELECT mi.ZMEDIALOCALPATH, m.ZMESSAGEDATE, m.ZISFROMME, m.ZMESSAGETYPE
             FROM ZWAMEDIAITEM mi
             JOIN ZWAMESSAGE m ON mi.ZMESSAGE = m.Z_PK
             WHERE mi.ZMEDIALOCALPATH IS NOT NULL
               AND m.ZMESSAGEDATE IS NOT NULL
         """).fetchall()
-        for path, ts, fromme in rows:
+        for path, ts, fromme, msgtype in rows:
             fname = Path(path).name
             if fname:
-                info_map[fname] = (ts, 'sent' if fromme else 'received')
+                info_map[fname] = (ts, 'sent' if fromme else 'received', msgtype or 0)
     except sqlite3.OperationalError:
         pass
 
-    # Strategy 2: direct ZMEDIAURLDATE (no JOIN, no direction info)
+    # Strategy 2: direct ZMEDIAURLDATE (no JOIN, no direction/type info)
     try:
         rows = chat_conn.execute("""
             SELECT ZMEDIALOCALPATH, ZMEDIAURLDATE
@@ -386,39 +432,51 @@ def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, s
         for path, ts in rows:
             fname = Path(path).name
             if fname and fname not in info_map:
-                info_map[fname] = (ts, 'received')
+                info_map[fname] = (ts, 'received', 0)
     except sqlite3.OperationalError:
         pass
 
     return info_map
 
 
+# ZMESSAGETYPE values that indicate GIF (WhatsApp stores GIFs as .mp4)
+GIF_MESSAGE_TYPES = frozenset({15})
+
+
 def query_media_files(
     manifest_conn: sqlite3.Connection,
-    single_file: str | None = None
+    single_file: str | None = None,
+    file_types: set[str] | None = None,
 ) -> list[tuple[str, str]]:
     """
-    Returns a list of (fileID, relativePath) for all WhatsApp images in the backup.
-    If single_file is given, restricts to that fileID (prefix match).
+    Returns a list of (fileID, relativePath) for WhatsApp media in the backup.
+
+    file_types: set of type names to include (e.g. {'img', 'gif', 'video'}).
+                Defaults to all known types if None.
     """
-    base_sql = """
+    active_types  = file_types or set(FILE_TYPES.keys())
+    active_exts   = frozenset().union(*(FILE_TYPES[t] for t in active_types if t in FILE_TYPES))
+
+    sql = """
         SELECT fileID, relativePath FROM Files
         WHERE domain = ?
         AND relativePath LIKE 'Message/Media/%'
         AND relativePath NOT LIKE '%.thumb%'
-        AND (
-            relativePath LIKE '%.jpg'
-            OR relativePath LIKE '%.jpeg'
-            OR relativePath LIKE '%.png'
-        )
+        AND relativePath NOT LIKE '%.mmsthumb%'
+        AND relativePath NOT LIKE '%.favicon%'
     """
     params: list = [WHATSAPP_DOMAIN]
 
     if single_file:
-        base_sql += " AND fileID LIKE ?"
+        sql += " AND fileID LIKE ?"
         params.append(f'{single_file}%')
 
-    return manifest_conn.execute(base_sql, params).fetchall()
+    # Fetch all and filter by extension in Python (cleaner than huge SQL OR chain)
+    rows = manifest_conn.execute(sql, params).fetchall()
+    return [
+        (fid, rpath) for fid, rpath in rows
+        if Path(rpath).suffix.lower() in active_exts
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -431,31 +489,37 @@ def build_dest_path(
     dt: datetime | None,
     original_filename: str,
     jid: str,
+    ftype: str | None = None,
 ) -> Path:
-    """Builds the destination path for a media file."""
-    if contact_name:
-        folder = safe_folder_name(contact_name)
-    else:
-        folder = f'_Unknown/{safe_folder_name(jid)}'
+    """
+    Builds the destination path for a media file.
 
-    name_part  = safe_filename_part(contact_name or jid)
-    phone_part = phone_from_jid(jid)
-    ext        = Path(original_filename).suffix.lower()
+    Documents go to _Documents/<contact>/<month>/ so they are physically
+    separated from photos/videos and won't pollute iCloud Photos imports.
+    All other types go directly to <contact>/<month>/.
+    """
+    contact_folder = safe_folder_name(contact_name) if contact_name else f'_Unknown/{safe_folder_name(jid)}'
+    name_part      = safe_filename_part(contact_name or jid)
+    phone_part     = phone_from_jid(jid)
+    ext            = Path(original_filename).suffix.lower()
 
     if dt:
         month_folder = dt.strftime('%Y-%m')
-        # e.g. John_Smith_15519999910208_2025-12-13_17-39-44.jpg
-        filename = f'{name_part}_{phone_part}_{dt.strftime("%Y-%m-%d_%H-%M-%S")}{ext}'
+        filename     = f'{name_part}_{phone_part}_{dt.strftime("%Y-%m-%d_%H-%M-%S")}{ext}'
     else:
         month_folder = '_no_date'
-        filename = f'{name_part}_{phone_part}_{original_filename}'
+        filename     = f'{name_part}_{phone_part}_{original_filename}'
 
-    dest = output_dir / folder / month_folder / filename
+    # Documents are isolated so iCloud Photos imports stay clean
+    if ftype == 'doc':
+        dest = output_dir / DOCS_FOLDER / contact_folder / month_folder / filename
+    else:
+        dest = output_dir / contact_folder / month_folder / filename
 
     # Avoid filename collisions
     if dest.exists():
-        stem = dest.stem
-        suffix = dest.suffix
+        stem    = dest.stem
+        suffix  = dest.suffix
         counter = 1
         while dest.exists():
             dest = dest.with_name(f'{stem}_{counter}{suffix}')
@@ -472,6 +536,7 @@ def extract(
     single_file: str | None = None,
     random_sample: int | None = None,
     inspect: bool = False,
+    file_types: set[str] | None = None,
 ) -> None:
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
@@ -502,7 +567,9 @@ def extract(
     print(f'[INFO] Contacts/groups loaded : {len(contact_map)}')
     print(f'[INFO] Media entries mapped   : {len(info_map)}')
 
-    all_files = query_media_files(manifest_conn, single_file)
+    active_types = file_types or set(FILE_TYPES.keys())
+    all_files = query_media_files(manifest_conn, single_file, active_types)
+    print(f'[INFO] Types selected         : {", ".join(sorted(active_types))}')
     print(f'[INFO] Media files found      : {len(all_files)}')
 
     # Filter by contact name
@@ -540,12 +607,19 @@ def extract(
         contact_name = contact_map.get(jid, '')
 
         original_filename = Path(relative_path).name
-        info = info_map.get(original_filename)
-        ts, direction = info if info else (None, 'received')
-        dt = apple_ts_to_datetime(ts) if ts is not None else None
+        ext               = Path(original_filename).suffix.lower()
+        info              = info_map.get(original_filename)
+        ts, direction, msgtype = info if info else (None, 'received', 0)
+        dt                = apple_ts_to_datetime(ts) if ts is not None else None
+
+        # Determine file type — GIFs saved as .mp4 by WhatsApp use ZMESSAGETYPE=15
+        if msgtype in GIF_MESSAGE_TYPES and ext == '.mp4':
+            ftype = 'gif'
+        else:
+            ftype = get_file_type(ext) or 'img'
 
         label = contact_name or jid
-        print(f'[{idx:>6}/{total}] {label} — {original_filename}', end='')
+        print(f'[{idx:>6}/{total}] [{ftype:>5}] {label} — {original_filename}', end='')
 
         # Locate the physical file in the backup
         src = backup_path / file_id[:2] / file_id
@@ -554,14 +628,14 @@ def extract(
             not_found += 1
             continue
 
-        dest = build_dest_path(output_dir, contact_name, dt, original_filename, jid)
+        dest = build_dest_path(output_dir, contact_name, dt, original_filename, jid, ftype)
 
         if dry_run:
             print(f'\n         -> {dest}  (dry-run)')
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dest))
-            set_rich_metadata(dest, dt, contact_name, jid, direction)
+            set_rich_metadata(dest, dt, contact_name, jid, direction, ftype)
             total_bytes += dest.stat().st_size
             print(f'\n         -> {dest}')
 
@@ -626,6 +700,19 @@ def main() -> None:
         help='Extract N randomly selected files (combinable with --contact)'
     )
     parser.add_argument(
+        '--type', nargs='+', default=None,
+        metavar='TYPE',
+        dest='file_types',
+        choices=[*FILE_TYPES.keys(), 'all'],
+        help=(
+            'File types to extract: img gif video audio doc all '
+            '(default: all). '
+            'Documents are saved to a separate _Documents/ folder '
+            'to keep iCloud Photos imports clean. '
+            'Example: --type img gif video'
+        )
+    )
+    parser.add_argument(
         '--inspect-db', action='store_true',
         help='Print the ChatStorage.sqlite schema and exit (useful for debugging)'
     )
@@ -634,6 +721,12 @@ def main() -> None:
 
     if args.random_sample is not None and args.random_sample < 1:
         sys.exit('[ERROR] --random must be greater than zero.')
+
+    # Resolve --type: 'all' or None both mean every type
+    if args.file_types and 'all' not in args.file_types:
+        file_types = set(args.file_types)
+    else:
+        file_types = set(FILE_TYPES.keys())
 
     backup_path = args.backup or find_backup_path()
 
@@ -650,6 +743,7 @@ def main() -> None:
         single_file=args.file,
         random_sample=args.random_sample,
         inspect=args.inspect_db,
+        file_types=file_types,
     )
 
 

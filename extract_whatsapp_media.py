@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
 WhatsApp Media Extractor
-Extrai fotos do backup local do iPhone, organizadas por contato/grupo e data.
+Extracts photos from a local iPhone backup, organized by contact/group and date.
 
-Uso:
-  python3 extract_whatsapp_media.py [opções]
+Usage:
+  python3 extract_whatsapp_media.py [options]
 
-Exemplos:
-  python3 extract_whatsapp_media.py                          # extração completa
-  python3 extract_whatsapp_media.py --dry-run                # simula sem copiar nada
-  python3 extract_whatsapp_media.py --contact "João Silva"   # apenas um contato
-  python3 extract_whatsapp_media.py --file abc123def456      # apenas um fileID
-  python3 extract_whatsapp_media.py --random 10              # 10 arquivos aleatórios
-  python3 extract_whatsapp_media.py --random 5 --contact "João"  # 5 aleatórios de um contato
+Examples:
+  python3 extract_whatsapp_media.py                           # full extraction
+  python3 extract_whatsapp_media.py --dry-run                 # simulate without copying
+  python3 extract_whatsapp_media.py --contact "John"          # single contact
+  python3 extract_whatsapp_media.py --file abc123def456       # single file by fileID
+  python3 extract_whatsapp_media.py --random 10               # 10 random files
+  python3 extract_whatsapp_media.py --random 5 --contact "John"  # 5 random from one contact
 """
 
 import argparse
@@ -43,10 +43,10 @@ try:
 except ImportError:
     HAS_PILLOW = False
 
-# macOS libc para setxattr nativo
+# macOS native libc for setxattr
 _libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
 
-# Apple epoch: 2001-01-01 00:00:00 UTC
+# Apple Core Data epoch starts at 2001-01-01 00:00:00 UTC (not Unix epoch)
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 WHATSAPP_DOMAIN = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared"
 
@@ -56,13 +56,13 @@ WHATSAPP_DOMAIN = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared"
 # ---------------------------------------------------------------------------
 
 def apple_ts_to_datetime(ts: float) -> datetime:
-    """Converte timestamp Apple (UTC) para datetime no fuso local da máquina."""
+    """Converts an Apple timestamp (UTC) to a datetime in the local machine timezone."""
     utc = APPLE_EPOCH + timedelta(seconds=ts)
-    return utc.astimezone()  # converte para timezone local
+    return utc.astimezone()
 
 
 def local_tz_offset(dt: datetime) -> str:
-    """Retorna o offset do fuso local no formato ±HH:MM (ex: -03:00)."""
+    """Returns the local timezone offset as ±HH:MM (e.g. -03:00)."""
     offset = dt.utcoffset()
     if offset is None:
         return ''
@@ -73,19 +73,19 @@ def local_tz_offset(dt: datetime) -> str:
 
 
 def safe_folder_name(name: str) -> str:
-    """Remove caracteres inválidos e emojis para nomes de pasta."""
-    # Remove emojis e caracteres não-ASCII problemáticos
+    """Strips emojis and characters that are invalid in folder names."""
+    # Remove emoji and non-BMP characters
     name = ''.join(
         c for c in name
-        if unicodedata.category(c) not in ('So', 'Cs')  # So=símbolo, Cs=surrogate
+        if unicodedata.category(c) not in ('So', 'Cs')  # So=symbol, Cs=surrogate
         and ord(c) < 0x10000
     )
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
-    return name.strip().strip('.') or '_Sem_Nome'
+    return name.strip().strip('.') or '_Unknown'
 
 
 def safe_filename_part(name: str, max_len: int = 40) -> str:
-    """Versão do nome para usar dentro do filename (underscores, sem emojis)."""
+    """Returns a filesystem-safe version of a name for use inside filenames."""
     name = safe_folder_name(name)
     name = re.sub(r'\s+', '_', name)
     name = re.sub(r'_+', '_', name).strip('_')
@@ -94,9 +94,9 @@ def safe_filename_part(name: str, max_len: int = 40) -> str:
 
 def extract_jid(relative_path: str) -> str | None:
     """
-    Extrai o JID do contato/grupo a partir do relativePath.
-    Ex: Message/Media/5511999910208@s.whatsapp.net/a/3/uuid.jpg  → 5511999910208@s.whatsapp.net
-        Message/Media/5511964049807-1595615948@g.us/2/3/uuid.jpg → 5511964049807-1595615948@g.us
+    Extracts the contact/group JID from a relativePath.
+    e.g. Message/Media/15519999910208@s.whatsapp.net/a/3/uuid.jpg -> 15519999910208@s.whatsapp.net
+         Message/Media/15519649807-1595615948@g.us/2/3/uuid.jpg   -> 15519649807-1595615948@g.us
     """
     match = re.match(r'^Message/Media/([^/]+)/', relative_path)
     if match:
@@ -106,17 +106,17 @@ def extract_jid(relative_path: str) -> str | None:
 
 def phone_from_jid(jid: str) -> str:
     """
-    Extrai o número de telefone do JID.
-    5511999910208@s.whatsapp.net        → 5511999910208
-    5511964049807-1595615948@g.us       → 5511964049807 (criador do grupo)
+    Extracts the phone number from a JID.
+    15519999910208@s.whatsapp.net  -> 15519999910208
+    15519649807-1595615948@g.us    -> 15519649807  (group creator's number)
     """
     number = jid.split('@')[0]
-    number = number.split('-')[0]  # grupos: pega só o número do criador
+    number = number.split('-')[0]  # for groups, keep only the creator's number
     return number
 
 
 def _macos_setxattr(filepath: Path, name: str, value: bytes) -> None:
-    """Escreve um extended attribute no macOS via setxattr nativo."""
+    """Writes a macOS extended attribute via native setxattr."""
     try:
         # setxattr(path, name, value, size, position, options)
         ret = _libc.setxattr(
@@ -128,23 +128,23 @@ def _macos_setxattr(filepath: Path, name: str, value: bytes) -> None:
             0,   # options
         )
         if ret != 0:
-            pass  # silencia; xattr não é crítico
+            pass  # xattr is non-critical; silently ignore errors
     except Exception:
         pass
 
 
 def _set_xattr_str(filepath: Path, key: str, value: str) -> None:
-    """Escreve xattr macOS com valor string (bplist)."""
+    """Writes a macOS xattr with a string value (binary plist)."""
     _macos_setxattr(filepath, key, plistlib.dumps(value, fmt=plistlib.FMT_BINARY))
 
 
 def _set_xattr_list(filepath: Path, key: str, value: list) -> None:
-    """Escreve xattr macOS com valor lista (bplist)."""
+    """Writes a macOS xattr with a list value (binary plist)."""
     _macos_setxattr(filepath, key, plistlib.dumps(value, fmt=plistlib.FMT_BINARY))
 
 
 def _set_xattr_date(filepath: Path, key: str, dt: datetime) -> None:
-    """Escreve xattr macOS com valor datetime (bplist). plistlib exige naive UTC."""
+    """Writes a macOS xattr with a datetime value (binary plist). plistlib requires naive UTC."""
     naive = dt.astimezone(timezone.utc).replace(tzinfo=None)
     _macos_setxattr(filepath, key, plistlib.dumps(naive, fmt=plistlib.FMT_BINARY))
 
@@ -154,45 +154,45 @@ def set_rich_metadata(
     dt: datetime | None,
     contact_name: str,
     jid: str,
-    direcao: str = 'recebida',
+    direction: str = 'received',
 ) -> None:
     """
-    Define metadados ricos no arquivo:
-      - EXIF: datas, descrição, autor, software, comentário JSON  (JPEG/PNG)
-      - macOS Spotlight (xattr): título, descrição, autores, palavras-chave, data de criação
-      - Filesystem: mtime/atime ajustados para a data original da mensagem
+    Writes rich metadata to the file:
+      - EXIF: dates, description, artist, software, JSON comment (JPEG only)
+      - macOS Spotlight (xattr): title, description, authors, keywords, creation date
+      - Filesystem: mtime/atime set to the original message date
     """
     is_group     = '@g.us' in jid
-    chat_type    = 'Grupo' if is_group else 'Contato'
+    chat_type    = 'Group' if is_group else 'Contact'
     display_name = contact_name or jid
     ext          = filepath.suffix.lower()
 
-    # dt já está em horário local (convertido em apple_ts_to_datetime)
-    date_exif    = dt.strftime('%Y:%m:%d %H:%M:%S') if dt else None  # EXIF = local time
-    date_human   = dt.strftime('%d/%m/%Y às %H:%M') if dt else 'data desconhecida'
+    # dt is already in local time (converted in apple_ts_to_datetime)
+    date_exif    = dt.strftime('%Y:%m:%d %H:%M:%S') if dt else None  # EXIF standard = local time
+    date_human   = dt.strftime('%m/%d/%Y at %H:%M') if dt else 'unknown date'
     date_iso     = dt.isoformat() if dt else None
-    tz_offset    = local_tz_offset(dt) if dt else ''                  # ex: -03:00
+    tz_offset    = local_tz_offset(dt) if dt else ''                  # e.g. -03:00
 
     title        = f'{display_name} · {dt.strftime("%Y-%m-%d %H:%M")}' if dt else display_name
     description  = f'WhatsApp · {chat_type}: {display_name} · {date_human}'
     phone        = phone_from_jid(jid)
-    keywords     = ['WhatsApp', chat_type, display_name, phone, direcao]
+    keywords     = ['WhatsApp', chat_type, display_name, phone, direction]
     if dt:
         keywords.append(dt.strftime('%Y'))
         keywords.append(dt.strftime('%Y-%m'))
 
     comment_json = json.dumps({
-        'source':   'WhatsApp',
-        'type':     chat_type.lower(),
-        'contact':  display_name,
-        'phone':    phone,
-        'jid':      jid,
-        'date':     date_iso,
-        'direcao':  direcao,
+        'source':    'WhatsApp',
+        'type':      chat_type.lower(),
+        'contact':   display_name,
+        'phone':     phone,
+        'jid':       jid,
+        'date':      date_iso,
+        'direction': direction,
     }, ensure_ascii=False)
 
     # ------------------------------------------------------------------
-    # 1. EXIF — apenas JPEG (piexif não suporta PNG)
+    # 1. EXIF — JPEG only (piexif does not support PNG)
     # ------------------------------------------------------------------
     if HAS_PIEXIF and ext in ('.jpg', '.jpeg'):
         try:
@@ -204,23 +204,24 @@ def set_rich_metadata(
             ifd0  = exif_dict.setdefault('0th', {})
             exif  = exif_dict.setdefault('Exif', {})
 
-            # Datas em horário local (padrão EXIF)
+            # Dates in local time (EXIF standard)
             if date_exif:
                 ifd0[piexif.ImageIFD.DateTime]          = date_exif.encode()
                 exif[piexif.ExifIFD.DateTimeOriginal]   = date_exif.encode()
                 exif[piexif.ExifIFD.DateTimeDigitized]  = date_exif.encode()
-            # Offset de fuso horário (EXIF 2.31+)
+
+            # Timezone offset (EXIF 2.31+)
             if tz_offset:
                 exif[piexif.ExifIFD.OffsetTimeOriginal]  = tz_offset.encode()
                 exif[piexif.ExifIFD.OffsetTimeDigitized] = tz_offset.encode()
 
-            # Descrição / título
+            # Description / authorship
             ifd0[piexif.ImageIFD.ImageDescription] = description.encode('utf-8')
             ifd0[piexif.ImageIFD.Artist]           = display_name.encode('utf-8')
             ifd0[piexif.ImageIFD.Copyright]        = 'WhatsApp'.encode()
             ifd0[piexif.ImageIFD.Software]         = 'WhatsApp Media Extractor'.encode()
 
-            # UserComment: prefixo ASCII obrigatório pelo padrão EXIF
+            # UserComment: ASCII prefix required by EXIF spec
             encoded_comment = b'ASCII\x00\x00\x00' + comment_json.encode('utf-8')
             exif[piexif.ExifIFD.UserComment] = encoded_comment
 
@@ -241,7 +242,7 @@ def set_rich_metadata(
         _set_xattr_date(filepath, 'com.apple.metadata:kMDItemContentCreationDate', dt)
 
     # ------------------------------------------------------------------
-    # 3. Timestamps do filesystem (mtime/atime → data original)
+    # 3. Filesystem timestamps (mtime/atime → original message date)
     # ------------------------------------------------------------------
     if dt:
         ts = dt.timestamp()
@@ -249,22 +250,23 @@ def set_rich_metadata(
 
 
 # ---------------------------------------------------------------------------
-# Localização do backup
+# Backup discovery
 # ---------------------------------------------------------------------------
 
 def find_backup_path() -> Path:
     """
-    Detecta o backup do iPhone. Procura primeiro na pasta do projeto
-    (backup movido localmente), depois no local padrão do Finder.
+    Locates the iPhone backup directory. Checks the script's own folder first
+    (in case the backup was moved locally), then falls back to the default
+    MobileSync location used by Finder.
     """
-    # 1. Pasta do próprio script (backup movido para o projeto)
+    # 1. Same directory as this script
     script_dir = Path(__file__).parent
     local = [d for d in script_dir.iterdir() if d.is_dir() and (d / 'Manifest.db').exists()]
     if local:
         local.sort(key=lambda d: (d / 'Manifest.db').stat().st_mtime, reverse=True)
         return local[0]
 
-    # 2. Local padrão do MobileSync
+    # 2. Default MobileSync location
     base = Path.home() / 'Library' / 'Application Support' / 'MobileSync' / 'Backup'
     if base.exists():
         backups = [d for d in base.iterdir() if d.is_dir() and (d / 'Manifest.db').exists()]
@@ -272,15 +274,15 @@ def find_backup_path() -> Path:
             backups.sort(key=lambda d: (d / 'Manifest.db').stat().st_mtime, reverse=True)
             return backups[0]
 
-    sys.exit('[ERRO] Nenhum backup encontrado. Use --backup para especificar o caminho.')
+    sys.exit('[ERROR] No backup found. Use --backup to specify the path.')
 
 
 # ---------------------------------------------------------------------------
-# Banco de dados
+# Database helpers
 # ---------------------------------------------------------------------------
 
 def find_chatstorage(manifest_conn: sqlite3.Connection, backup_path: Path) -> Path:
-    """Localiza o ChatStorage.sqlite dentro do backup via Manifest.db."""
+    """Locates ChatStorage.sqlite inside the backup via Manifest.db."""
     row = manifest_conn.execute(
         "SELECT fileID FROM Files WHERE relativePath LIKE '%ChatStorage.sqlite' "
         "AND domain = ? LIMIT 1",
@@ -288,18 +290,18 @@ def find_chatstorage(manifest_conn: sqlite3.Connection, backup_path: Path) -> Pa
     ).fetchone()
 
     if not row:
-        sys.exit('[ERRO] ChatStorage.sqlite não encontrado no Manifest.db.')
+        sys.exit('[ERROR] ChatStorage.sqlite not found in Manifest.db.')
 
     file_id = row[0]
     src = backup_path / file_id[:2] / file_id
     if not src.exists():
-        sys.exit(f'[ERRO] Arquivo físico do ChatStorage não encontrado: {src}')
+        sys.exit(f'[ERROR] Physical ChatStorage file not found: {src}')
 
     return src
 
 
 def load_contact_map(chat_conn: sqlite3.Connection) -> dict[str, str]:
-    """Retorna {jid: nome_legível} a partir do ZWACHATSESSION."""
+    """Returns {jid: display_name} from ZWACHATSESSION."""
     rows = chat_conn.execute(
         "SELECT ZCONTACTJID, ZPARTNERNAME FROM ZWACHATSESSION "
         "WHERE ZCONTACTJID IS NOT NULL"
@@ -308,7 +310,7 @@ def load_contact_map(chat_conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    """Retorna lista de colunas de uma tabela."""
+    """Returns the list of column names for a given table."""
     try:
         return [r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()]
     except Exception:
@@ -322,22 +324,21 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
 
 
 def inspect_db(chat_conn: sqlite3.Connection) -> None:
-    """Imprime o esquema relevante do ChatStorage.sqlite para diagnóstico."""
+    """Prints the relevant ChatStorage.sqlite schema for debugging purposes."""
     tables = _tables(chat_conn)
     interesting = [t for t in tables if 'WA' in t.upper() or 'CHAT' in t.upper() or 'MESSAGE' in t.upper()]
-    print('\n[INSPECT] Tabelas encontradas no ChatStorage.sqlite:')
+    print('\n[INSPECT] Tables found in ChatStorage.sqlite:')
     for t in interesting:
         cols = _table_columns(chat_conn, t)
         print(f'  {t}: {cols}')
 
-    # Mostra 2 linhas de ZWAMESSAGE para ver como ZMEDIALOCALPATH está preenchido
     for table in ['ZWAMESSAGE', 'ZWAMEDIAITEM']:
         if table not in tables:
             continue
         cols = _table_columns(chat_conn, table)
         date_cols = [c for c in cols if any(k in c.upper() for k in ('DATE', 'TIME', 'STAMP'))]
         path_cols = [c for c in cols if any(k in c.upper() for k in ('PATH', 'URL', 'LOCAL', 'FILE'))]
-        print(f'\n[INSPECT] {table} — colunas de data: {date_cols} | de path: {path_cols}')
+        print(f'\n[INSPECT] {table} — date columns: {date_cols} | path columns: {path_cols}')
         if date_cols and path_cols:
             sample = chat_conn.execute(
                 f'SELECT {path_cols[0]}, {date_cols[0]} FROM {table} '
@@ -350,11 +351,15 @@ def inspect_db(chat_conn: sqlite3.Connection) -> None:
 
 def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
     """
-    Retorna {filename: (apple_timestamp, direcao)} onde direcao é 'enviada' ou 'recebida'.
+    Returns {filename: (apple_timestamp, direction)} where direction is
+    'sent' (you sent it) or 'received' (sent by the contact).
+
+    Strategy 1: JOIN ZWAMEDIAITEM -> ZWAMESSAGE for accurate send date + direction.
+    Strategy 2: ZMEDIAURLDATE directly from ZWAMEDIAITEM as a fallback.
     """
     info_map: dict[str, tuple[float, str]] = {}
 
-    # Estratégia 1: JOIN ZWAMEDIAITEM → ZWAMESSAGE
+    # Strategy 1: JOIN for send date and direction
     try:
         rows = chat_conn.execute("""
             SELECT mi.ZMEDIALOCALPATH, m.ZMESSAGEDATE, m.ZISFROMME
@@ -366,11 +371,11 @@ def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, s
         for path, ts, fromme in rows:
             fname = Path(path).name
             if fname:
-                info_map[fname] = (ts, 'enviada' if fromme else 'recebida')
+                info_map[fname] = (ts, 'sent' if fromme else 'received')
     except sqlite3.OperationalError:
         pass
 
-    # Estratégia 2: ZMEDIAURLDATE direto (fallback, sem ZISFROMME)
+    # Strategy 2: direct ZMEDIAURLDATE (no JOIN, no direction info)
     try:
         rows = chat_conn.execute("""
             SELECT ZMEDIALOCALPATH, ZMEDIAURLDATE
@@ -381,7 +386,7 @@ def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, s
         for path, ts in rows:
             fname = Path(path).name
             if fname and fname not in info_map:
-                info_map[fname] = (ts, 'recebida')
+                info_map[fname] = (ts, 'received')
     except sqlite3.OperationalError:
         pass
 
@@ -393,8 +398,8 @@ def query_media_files(
     single_file: str | None = None
 ) -> list[tuple[str, str]]:
     """
-    Retorna lista de (fileID, relativePath) para imagens do WhatsApp.
-    Se single_file for fornecido, filtra apenas esse fileID.
+    Returns a list of (fileID, relativePath) for all WhatsApp images in the backup.
+    If single_file is given, restricts to that fileID (prefix match).
     """
     base_sql = """
         SELECT fileID, relativePath FROM Files
@@ -417,7 +422,7 @@ def query_media_files(
 
 
 # ---------------------------------------------------------------------------
-# Extração
+# Extraction
 # ---------------------------------------------------------------------------
 
 def build_dest_path(
@@ -427,11 +432,11 @@ def build_dest_path(
     original_filename: str,
     jid: str,
 ) -> Path:
-    """Monta o caminho de destino do arquivo."""
+    """Builds the destination path for a media file."""
     if contact_name:
         folder = safe_folder_name(contact_name)
     else:
-        folder = f'_Desconhecido/{safe_folder_name(jid)}'
+        folder = f'_Unknown/{safe_folder_name(jid)}'
 
     name_part  = safe_filename_part(contact_name or jid)
     phone_part = phone_from_jid(jid)
@@ -439,15 +444,15 @@ def build_dest_path(
 
     if dt:
         month_folder = dt.strftime('%Y-%m')
-        # Ex: Lucila_Calaca_5511999910208_2025-12-13_17-39-44.jpg
+        # e.g. John_Smith_15519999910208_2025-12-13_17-39-44.jpg
         filename = f'{name_part}_{phone_part}_{dt.strftime("%Y-%m-%d_%H-%M-%S")}{ext}'
     else:
-        month_folder = '_sem_data'
+        month_folder = '_no_date'
         filename = f'{name_part}_{phone_part}_{original_filename}'
 
     dest = output_dir / folder / month_folder / filename
 
-    # Evita colisão de nomes
+    # Avoid filename collisions
     if dest.exists():
         stem = dest.stem
         suffix = dest.suffix
@@ -470,16 +475,16 @@ def extract(
 ) -> None:
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
-        sys.exit(f'[ERRO] Manifest.db não encontrado em: {backup_path}')
+        sys.exit(f'[ERROR] Manifest.db not found in: {backup_path}')
 
-    print(f'[INFO] Backup: {backup_path}')
-    print(f'[INFO] Destino: {output_dir}')
+    print(f'[INFO] Backup : {backup_path}')
+    print(f'[INFO] Output : {output_dir}')
     if dry_run:
-        print('[INFO] Modo DRY-RUN — nenhum arquivo será copiado.\n')
+        print('[INFO] DRY-RUN mode — no files will be copied.\n')
 
     manifest_conn = sqlite3.connect(str(manifest_db))
 
-    # Copia ChatStorage para tmp (evita lock no backup)
+    # Copy ChatStorage to a temp file to avoid locking the backup
     chatstorage_src = find_chatstorage(manifest_conn, backup_path)
     with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
         tmp_path = tmp.name
@@ -494,91 +499,90 @@ def extract(
 
     info_map = load_message_info(chat_conn)
 
-    print(f'[INFO] Contatos/grupos carregados : {len(contact_map)}')
-    print(f'[INFO] Mídias mapeadas            : {len(info_map)}')
+    print(f'[INFO] Contacts/groups loaded : {len(contact_map)}')
+    print(f'[INFO] Media entries mapped   : {len(info_map)}')
 
     all_files = query_media_files(manifest_conn, single_file)
-    print(f'[INFO] Arquivos de mídia encontrados: {len(all_files)}')
+    print(f'[INFO] Media files found      : {len(all_files)}')
 
-    # Filtra por contato se solicitado
+    # Filter by contact name
     if filter_contact:
         filter_lower = filter_contact.lower()
-        # Descobre quais JIDs correspondem ao nome
         matching_jids = {
             jid for jid, name in contact_map.items()
             if filter_lower in name.lower()
         }
         if not matching_jids:
-            print(f'[AVISO] Nenhum contato encontrado com nome contendo "{filter_contact}".')
-            print(f'        Contatos disponíveis: {sorted(contact_map.values())[:20]}')
+            print(f'[WARNING] No contact found matching "{filter_contact}".')
+            print(f'          Available contacts: {sorted(contact_map.values())[:20]}')
         all_files = [
             (fid, rpath) for fid, rpath in all_files
             if extract_jid(rpath) in matching_jids
         ]
-        print(f'[INFO] Arquivos após filtro de contato: {len(all_files)}')
+        print(f'[INFO] Files after contact filter : {len(all_files)}')
 
     if random_sample is not None:
         n = min(random_sample, len(all_files))
         all_files = random.sample(all_files, n)
-        print(f'[INFO] Amostra aleatória: {n} arquivo(s) selecionado(s)')
+        print(f'[INFO] Random sample: {n} file(s) selected')
 
     print()
 
-    # Contadores para o relatório
-    stats: dict[str, int] = {}  # {nome_contato: count}
+    # Counters for the final report
+    stats: dict[str, int] = {}
     total_bytes = 0
     not_found = 0
     copied = 0
 
     total = len(all_files)
     for idx, (file_id, relative_path) in enumerate(all_files, 1):
-        jid = extract_jid(relative_path) or 'desconhecido'
+        jid = extract_jid(relative_path) or 'unknown'
         contact_name = contact_map.get(jid, '')
 
         original_filename = Path(relative_path).name
         info = info_map.get(original_filename)
-        ts, direcao = info if info else (None, 'recebida')
+        ts, direction = info if info else (None, 'received')
         dt = apple_ts_to_datetime(ts) if ts is not None else None
 
         label = contact_name or jid
         print(f'[{idx:>6}/{total}] {label} — {original_filename}', end='')
 
-        # Arquivo físico no backup
+        # Locate the physical file in the backup
         src = backup_path / file_id[:2] / file_id
         if not src.exists():
-            print(' [NÃO ENCONTRADO]')
+            print(' [NOT FOUND]')
             not_found += 1
             continue
 
         dest = build_dest_path(output_dir, contact_name, dt, original_filename, jid)
 
         if dry_run:
-            print(f'\n         → {dest}  (dry-run)')
+            print(f'\n         -> {dest}  (dry-run)')
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dest))
-            set_rich_metadata(dest, dt, contact_name, jid, direcao)
+            set_rich_metadata(dest, dt, contact_name, jid, direction)
             total_bytes += dest.stat().st_size
-            print(f'\n         → {dest}')
+            print(f'\n         -> {dest}')
 
         copied += 1
         stats[label] = stats.get(label, 0) + 1
 
-    # Limpeza
+    # Cleanup
     chat_conn.close()
     manifest_conn.close()
     os.unlink(tmp_path)
 
-    # Relatório final
+    # Final report
     print('\n' + '=' * 60)
-    print('RELATÓRIO FINAL')
+    print('FINAL REPORT')
     print('=' * 60)
-    print(f'Total processado : {copied}')
-    print(f'Não encontrados  : {not_found}')
+    print(f'Processed   : {copied}')
+    print(f'Not found   : {not_found}')
     if not dry_run:
-        print(f'Espaço total     : {total_bytes / 1_073_741_824:.2f} GB')
+        print(f'Total size  : {total_bytes / 1_073_741_824:.2f} GB')
     print()
-    print(f'{"Contato/Grupo":<45} {"Fotos":>6}')
+    print(f'{"Contact/Group":<45} {"Photos":>6}')
     print('-' * 53)
     for name, count in sorted(stats.items(), key=lambda x: -x[1]):
         print(f'{name:<45} {count:>6}')
@@ -591,52 +595,52 @@ def extract(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Extrai fotos do WhatsApp de um backup local do iPhone.'
+        description='Extract WhatsApp photos from a local iPhone backup.'
     )
     parser.add_argument(
         '--backup', type=Path, default=None,
-        help='Path do backup (detecta o mais recente automaticamente se omitido)'
+        help='Path to the iPhone backup (auto-detected if omitted)'
     )
     parser.add_argument(
         '--output', type=Path, default=Path(__file__).parent / 'WhatsApp_Media_Export',
-        help='Pasta de destino (padrão: ./WhatsApp_Media_Export na pasta do script)'
+        help='Output folder (default: ./WhatsApp_Media_Export)'
     )
     parser.add_argument(
         '--dry-run', action='store_true',
-        help='Simula a extração sem copiar nenhum arquivo'
+        help='Simulate extraction without copying any files'
     )
     parser.add_argument(
         '--contact', type=str, default=None,
-        metavar='NOME',
-        help='Extrai apenas arquivos do contato/grupo cujo nome contenha NOME (case-insensitive)'
+        metavar='NAME',
+        help='Extract only files from contacts whose name contains NAME (case-insensitive)'
     )
     parser.add_argument(
         '--file', type=str, default=None,
         metavar='FILE_ID',
-        help='Extrai apenas o arquivo com esse fileID (pode ser prefixo do SHA1)'
+        help='Extract a single file by its SHA1 fileID (prefix match supported)'
     )
     parser.add_argument(
         '--random', type=int, default=None,
         metavar='N',
         dest='random_sample',
-        help='Extrai N arquivos escolhidos aleatoriamente (combinável com --contact)'
+        help='Extract N randomly selected files (combinable with --contact)'
     )
     parser.add_argument(
         '--inspect-db', action='store_true',
-        help='Imprime o esquema do ChatStorage.sqlite e sai (útil para diagnóstico)'
+        help='Print the ChatStorage.sqlite schema and exit (useful for debugging)'
     )
 
     args = parser.parse_args()
 
     if args.random_sample is not None and args.random_sample < 1:
-        sys.exit('[ERRO] --random deve ser um número maior que zero.')
+        sys.exit('[ERROR] --random must be greater than zero.')
 
     backup_path = args.backup or find_backup_path()
 
     if not HAS_PIEXIF:
-        print('[AVISO] piexif não instalado — campos EXIF internos não serão gravados.')
-        print('        Instale com: pip3 install piexif')
-        print('        (macOS Spotlight/xattr e timestamps continuam funcionando)\n')
+        print('[WARNING] piexif is not installed — EXIF fields will not be written.')
+        print('          Install with: pip3 install piexif')
+        print('          (macOS Spotlight/xattr and timestamps will still work)\n')
 
     extract(
         backup_path=backup_path,

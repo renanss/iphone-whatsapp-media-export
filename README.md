@@ -8,7 +8,7 @@ Extract, organize, and archive your WhatsApp photos from an iPhone local backup 
 
 ## ✨ Features
 
-- Extracts **~59,000+ photos** from a local iPhone backup (no decryption needed)
+- Extracts **all photos** from a local iPhone backup (no decryption needed)
 - Organizes files by **contact/group → year-month**
 - Renames files with **contact name + phone number + original timestamp**
 - Writes rich **EXIF metadata** (DateTimeOriginal, Artist, Description, UserComment)

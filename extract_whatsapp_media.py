@@ -705,8 +705,10 @@ def main() -> None:
         dest='file_types',
         choices=[*FILE_TYPES.keys(), 'all'],
         help=(
-            'File types to include: img gif video audio doc all (default: all). '
-            'Example: --type img video'
+            'File types to include: img gif video audio doc all. '
+            'Default: img gif video (audio and doc require explicit opt-in). '
+            'Use "all" to extract everything. '
+            'Example: --type img video doc'
         )
     )
     parser.add_argument(
@@ -729,11 +731,15 @@ def main() -> None:
     if args.random_sample is not None and args.random_sample < 1:
         sys.exit('[ERROR] --random must be greater than zero.')
 
-    # Resolve --type: 'all' or None both mean every type
-    if args.file_types and 'all' not in args.file_types:
-        file_types = set(args.file_types)
-    else:
+    # Default is media only — doc and audio require explicit opt-in
+    DEFAULT_TYPES = {'img', 'gif', 'video'}
+
+    if not args.file_types:
+        file_types = DEFAULT_TYPES
+    elif 'all' in args.file_types:
         file_types = set(FILE_TYPES.keys())
+    else:
+        file_types = set(args.file_types)
 
     # Apply --exclude-type on top
     if args.exclude_types:

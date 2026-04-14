@@ -1,0 +1,17 @@
+# Backup files — never commit
+00008110-*/
+*.sqlite
+*.db
+
+# Exported media
+WhatsApp_Media_Export/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store

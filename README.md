@@ -2,7 +2,7 @@
 
 Extract, organize, and archive your WhatsApp photos from an iPhone local backup — with rich metadata, proper timestamps, and iCloud-ready structure.
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support%20this%20project-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/renanss)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support%20this%20project-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/renanssn)
 
 ---
 
@@ -175,7 +175,7 @@ To free up space on your iPhone after verifying the export:
 
 If this tool saved you time or helped you recover memories, consider buying me a coffee:
 
-[![Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/renanss)
+[![Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/renanssn)
 
 ---
 

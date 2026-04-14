@@ -705,11 +705,18 @@ def main() -> None:
         dest='file_types',
         choices=[*FILE_TYPES.keys(), 'all'],
         help=(
-            'File types to extract: img gif video audio doc all '
-            '(default: all). '
-            'Documents are saved to a separate _Documents/ folder '
-            'to keep iCloud Photos imports clean. '
-            'Example: --type img gif video'
+            'File types to include: img gif video audio doc all (default: all). '
+            'Example: --type img video'
+        )
+    )
+    parser.add_argument(
+        '--exclude-type', nargs='+', default=None,
+        metavar='TYPE',
+        dest='exclude_types',
+        choices=list(FILE_TYPES.keys()),
+        help=(
+            'File types to exclude. '
+            'Example: --exclude-type gif audio'
         )
     )
     parser.add_argument(
@@ -727,6 +734,13 @@ def main() -> None:
         file_types = set(args.file_types)
     else:
         file_types = set(FILE_TYPES.keys())
+
+    # Apply --exclude-type on top
+    if args.exclude_types:
+        file_types -= set(args.exclude_types)
+
+    if not file_types:
+        sys.exit('[ERROR] No file types remaining after applying --exclude-type.')
 
     backup_path = args.backup or find_backup_path()
 

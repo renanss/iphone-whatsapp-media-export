@@ -706,9 +706,9 @@ def main() -> None:
         choices=[*FILE_TYPES.keys(), 'all'],
         help=(
             'File types to include: img gif video audio doc all. '
-            'Default: img gif video doc (audio is opt-in). '
+            'Default: img video audio doc (gif is opt-in). '
             'Docs are saved to a separate _Documents/ folder automatically. '
-            'Use "all" to include audio as well. '
+            'Use "all" to include gif as well. '
             'Example: --type img video doc'
         )
     )
@@ -732,9 +732,9 @@ def main() -> None:
     if args.random_sample is not None and args.random_sample < 1:
         sys.exit('[ERROR] --random must be greater than zero.')
 
-    # Default: all types except audio (voice messages are rarely wanted)
+    # Default: everything except gif (opt-in)
     # Documents are included but routed to a separate _Documents/ folder
-    DEFAULT_TYPES = {'img', 'gif', 'video', 'doc'}
+    DEFAULT_TYPES = {'img', 'video', 'audio', 'doc'}
 
     if not args.file_types:
         file_types = DEFAULT_TYPES

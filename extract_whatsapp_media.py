@@ -56,7 +56,10 @@ WHATSAPP_DOMAIN = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared"
 
 FILE_TYPES: dict[str, frozenset[str]] = {
     'img': frozenset({
-        '.jpg', '.jpeg', '.png', '.webp', '.heic', '.tiff', '.bmp',
+        '.jpg', '.jpeg', '.png', '.heic', '.tiff', '.bmp',
+    }),
+    'webp': frozenset({
+        '.webp',  # mostly WhatsApp stickers
     }),
     'gif': frozenset({
         '.gif',
@@ -706,9 +709,9 @@ def main() -> None:
         choices=[*FILE_TYPES.keys(), 'all'],
         help=(
             'File types to include: img gif video audio doc all. '
-            'Default: img video audio doc (gif is opt-in). '
+            'Default: img video audio doc (gif and webp are opt-in). '
             'Docs are saved to a separate _Documents/ folder automatically. '
-            'Use "all" to include gif as well. '
+            'Use "all" to include gif and webp as well. '
             'Example: --type img video doc'
         )
     )
@@ -732,7 +735,7 @@ def main() -> None:
     if args.random_sample is not None and args.random_sample < 1:
         sys.exit('[ERROR] --random must be greater than zero.')
 
-    # Default: everything except gif (opt-in)
+    # Default: everything except gif and webp (both opt-in)
     # Documents are included but routed to a separate _Documents/ folder
     DEFAULT_TYPES = {'img', 'video', 'audio', 'doc'}
 

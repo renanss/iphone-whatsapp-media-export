@@ -540,6 +540,8 @@ def extract(
     random_sample: int | None = None,
     inspect: bool = False,
     file_types: set[str] | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> None:
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
@@ -574,6 +576,25 @@ def extract(
     all_files = query_media_files(manifest_conn, single_file, active_types)
     print(f'[INFO] Types selected         : {", ".join(sorted(active_types))}')
     print(f'[INFO] Media files found      : {len(all_files)}')
+
+    # Filter by date range (uses info_map for pre-filtering before the main loop)
+    if date_from or date_to:
+        def _in_range(rpath: str) -> bool:
+            ts_val = info_map.get(Path(rpath).name)
+            if not ts_val:
+                return False  # no date → exclude when a range is set
+            dt = apple_ts_to_datetime(ts_val[0])
+            if date_from and dt < date_from:
+                return False
+            if date_to and dt > date_to:
+                return False
+            return True
+
+        all_files = [(fid, rpath) for fid, rpath in all_files if _in_range(rpath)]
+        label_from = date_from.strftime('%Y-%m-%d') if date_from else '—'
+        label_to   = date_to.strftime('%Y-%m-%d')   if date_to   else '—'
+        print(f'[INFO] Date range filter      : {label_from} → {label_to}')
+        print(f'[INFO] Files after date filter: {len(all_files)}')
 
     # Filter by contact name
     if filter_contact:
@@ -726,6 +747,18 @@ def main() -> None:
         )
     )
     parser.add_argument(
+        '--from', type=str, default=None,
+        metavar='YYYY-MM-DD',
+        dest='date_from',
+        help='Extract only files on or after this date. Example: --from 2023-01-01'
+    )
+    parser.add_argument(
+        '--to', type=str, default=None,
+        metavar='YYYY-MM-DD',
+        dest='date_to',
+        help='Extract only files on or before this date. Example: --to 2023-12-31'
+    )
+    parser.add_argument(
         '--inspect-db', action='store_true',
         help='Print the ChatStorage.sqlite schema and exit (useful for debugging)'
     )
@@ -734,6 +767,21 @@ def main() -> None:
 
     if args.random_sample is not None and args.random_sample < 1:
         sys.exit('[ERROR] --random must be greater than zero.')
+
+    def _parse_date(value: str, param: str) -> datetime:
+        try:
+            d = datetime.strptime(value, '%Y-%m-%d')
+            return d.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        except ValueError:
+            sys.exit(f'[ERROR] Invalid date for {param}: "{value}". Use YYYY-MM-DD format.')
+
+    date_from = _parse_date(args.date_from, '--from') if args.date_from else None
+    date_to   = _parse_date(args.date_to,   '--to'  ).replace(
+        hour=23, minute=59, second=59
+    ) if args.date_to else None
+
+    if date_from and date_to and date_from > date_to:
+        sys.exit('[ERROR] --from date cannot be after --to date.')
 
     # Default: everything except gif and webp (both opt-in)
     # Documents are included but routed to a separate _Documents/ folder
@@ -769,6 +817,8 @@ def main() -> None:
         random_sample=args.random_sample,
         inspect=args.inspect_db,
         file_types=file_types,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 

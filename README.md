@@ -9,6 +9,7 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 ## ✨ Features
 
 - Extracts **all media** from a local iPhone backup (no decryption needed)
+- Extracts media from a local **Android WhatsApp folder** with `extract_android.py --platform android`
 - Supports **photos, videos, audio, documents, GIFs and stickers (webp)**
 - Organizes files by **contact/group → year-month**
 - Renames files with **contact name + phone number + original timestamp**
@@ -80,6 +81,15 @@ python3 extract_whatsapp_media.py
 ```
 
 Output is saved to `./WhatsApp_Media_Export/` by default.
+
+### Android backup
+
+For Android, point `--backup` at a local copy of the WhatsApp folder that
+contains `msgstore.db` and `Media/`:
+
+```bash
+python3 extract_android.py --platform android --backup /path/to/WhatsApp --output ./out
+```
 
 ---
 
@@ -200,6 +210,50 @@ python3 extract_whatsapp_media.py [options]
 
 ---
 
+## ⚙️ extract_android.py — Android Options
+
+```
+python3 extract_android.py --platform android --backup /path/to/WhatsApp [options]
+```
+
+The Android extractor reads `msgstore.db`, uses `wa.db` when present for
+contact names, and copies media directly from the Android `Media/` folder. It
+does not need an iTunes/Finder backup or `Manifest.db`.
+
+Expected backup layout:
+
+```
+WhatsApp/
+├── msgstore.db
+├── wa.db                 # optional, improves contact names
+└── Media/
+    ├── WhatsApp Images/
+    ├── WhatsApp Video/
+    ├── WhatsApp Audio/
+    └── ...
+```
+
+`msgstore.db` schemas vary between WhatsApp Android versions, so the extractor
+inspects the `messages` and `chat_list` tables at runtime instead of assuming a
+single column layout. It also accepts Android 11+ media paths such as
+`Android/media/com.whatsapp/WhatsApp/Media/...`.
+
+| Option | Description |
+|---|---|
+| `--platform android` | Explicit platform marker for scripts or docs that distinguish Android from iPhone extraction |
+| `--backup PATH` | Required path to the Android WhatsApp folder or local copy |
+| `--output PATH` | Output folder. Default: `./WhatsApp_Media_Export` |
+| `--dry-run` | Preview matched media and destination paths without copying files |
+| `--contact NAME` | Extract contacts/groups whose display name or raw JID contains `NAME` |
+| `--from YYYY-MM-DD` | Extract only media on or after this date |
+| `--to YYYY-MM-DD` | Extract only media on or before this date |
+| `--type TYPE ...` | Include only selected file types: `img`, `video`, `audio`, `doc`, `gif`, `webp`, or `all` |
+| `--exclude-type TYPE ...` | Exclude selected file types after `--type` is applied |
+| `--random N` | Extract a random sample after all filters are applied |
+| `--inspect-db` | Print Android database schema hints before extracting |
+
+---
+
 ## 💡 Examples
 
 ```bash
@@ -235,6 +289,9 @@ python3 extract_whatsapp_media.py --type doc
 
 # Custom output folder
 python3 extract_whatsapp_media.py --output ~/Desktop/MyWhatsAppExport
+
+# Android local WhatsApp folder
+python3 extract_android.py --platform android --backup /path/to/WhatsApp --output ./out
 ```
 
 ---

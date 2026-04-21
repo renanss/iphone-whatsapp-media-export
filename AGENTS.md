@@ -8,73 +8,76 @@ that shares the same repo. No shared files, no conflicts, clean PRs.
 
 ---
 
+## Task lifecycle — MANDATORY
+
+```
+TASKS/TODO/   →   (agent picks up task)   →   TASKS/QA/   →   (tester approves)   →   TASKS/DONE/
+```
+
+**Every agent must follow this on completion:**
+
+1. Copy the task spec from `TASKS/TODO/<task>.md` into `TASKS/QA/<task>.md`
+2. Replace the content with a QA card using the template below
+3. Delete the original from `TASKS/TODO/`
+4. Commit the file move as part of your feature commit (or as a follow-up commit on the same branch)
+
+**QA card template** (`TASKS/QA/<task>.md`):
+
+```markdown
+# QA — Task <N>: <Title>
+
+**Branch:** `feature/...`
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/<N>
+**Dev completed by:** Agent <1 or 2>
+
+---
+
+## What was built
+<!-- 3–6 bullet points describing what changed and why -->
+
+---
+
+## Definition of Done
+<!-- Concrete, runnable checks. Each line is a checkbox the tester will tick. -->
+- [ ] ...
+- [ ] ...
+```
+
+After the tester approves, the file is moved to `TASKS/DONE/` and the PR is merged.
+
+---
+
 ## Project structure (read this first)
 
 ```
 whatsapp_extractor/
   constants.py     — FILE_TYPES, APPLE_EPOCH, DEFAULT_TYPES, GIF_MESSAGE_TYPES
   utils.py         — pure helpers (dates, JID parsing, safe names)
-  metadata.py      — EXIF + macOS xattr/Spotlight writing
-  backup.py        — find_backup_path(), find_chatstorage()
+  metadata.py      — EXIF + macOS xattr/Spotlight writing; XMP sidecar on Windows/Linux
+  backup.py        — find_backup_path() (cross-platform), find_chatstorage()
   database.py      — Manifest.db and ChatStorage queries
   extractor.py     — build_dest_path(), extract() loop
   cli.py           — argparse for extract_whatsapp_media.py
   contacts_cli.py  — argparse for list_contacts.py
+  gui.py           — tkinter GUI (zero extra deps)
 
 extract_whatsapp_media.py   ← thin entry point (3 lines)
 list_contacts.py            ← thin entry point (3 lines)
-TODO/                       ← feature specs (one file per feature)
+gui.py                      ← thin entry point (3 lines)
+
+TASKS/
+  TODO/   ← specs for features not yet started
+  QA/     ← dev-complete features awaiting tester sign-off
+  DONE/   ← tester-approved, merged features
 ```
 
 ---
 
 ## Round 1 — Parallel (zero file overlap)
 
-### Agent 1 — Claude (tasks 10 + 11)
+### Agent 1 — Claude  ✅ COMPLETE — awaiting QA
 
-**Worktree setup** (run once from the main project directory):
-```bash
-git checkout main
-git pull
-git worktree add ../wa-feature-10-11 -b feature/10-11-metadata-gui
-```
-
-Working directory: `../wa-feature-10-11`
-
-**Tasks:**
-
-#### TODO/10-windows-linux-support.md
-- File to edit: `whatsapp_extractor/metadata.py`
-- Goal: replace the macOS-only `setxattr` calls with a cross-platform
-  implementation using `sys.platform`:
-  - `darwin` → keep current `setxattr` via ctypes (no change)
-  - `win32` / `linux` → write an XMP sidecar file (`.xmp`) alongside each
-    exported file containing the same metadata (title, keywords, date, contact)
-- XMP sidecar format is standard XML/RDF; keep it simple — Lightroom and
-  digiKam can read it
-- The public API `set_rich_metadata(filepath, dt, contact_name, jid, direction, ftype)`
-  must not change signature
-
-#### TODO/11-gui.md
-- Create a new file: `whatsapp_extractor/gui.py`
-- Create a new entry point: `gui.py` in the project root (same pattern as
-  `extract_whatsapp_media.py`)
-- Use **tkinter** (zero extra dependencies)
-- UI elements: backup folder selector, output folder selector, contact name
-  filter field, date-from / date-to pickers, file type checkboxes (img, video,
-  audio, doc, gif, webp), progress display (text log or progress bar), Run button
-- Must call `from whatsapp_extractor.extractor import extract` — no logic duplication
-- The `extract()` function is blocking; run it in a `threading.Thread` so the
-  GUI doesn't freeze
-
-**When done:**
-```bash
-# from ../wa-feature-10-11
-git add -p
-git commit -m "feat: cross-platform metadata + tkinter GUI"
-git push -u origin feature/10-11-metadata-gui
-# open a PR on GitHub
-```
+Tasks 10 and 11 are done. QA cards are in `TASKS/QA/`.
 
 ---
 
@@ -89,9 +92,9 @@ git worktree add ../wa-feature-12 -b feature/12-android-support
 
 Working directory: `../wa-feature-12`
 
-**Task:**
+**Task spec:** `TASKS/TODO/12-android-support.md`
 
-#### TODO/12-android-support.md
+**Summary:**
 - Create a new module: `whatsapp_extractor/android_extractor.py`
 - Create a new entry point: `extract_android.py` in the project root
 - Android WhatsApp stores messages in `msgstore.db` (SQLite)
@@ -110,7 +113,6 @@ Working directory: `../wa-feature-12`
 - CLI: `python3 extract_android.py --backup /path/to/WhatsApp --output ./out`
   Mirror the same flags as `extract_whatsapp_media.py` where applicable
   (`--dry-run`, `--contact`, `--from`, `--to`, `--type`, `--random`)
-- Add `--platform android` detection note in README if you update docs
 
 **When done:**
 ```bash
@@ -120,6 +122,8 @@ git commit -m "feat: Android backup support"
 git push -u origin feature/12-android-support
 # open a PR on GitHub
 ```
+
+**Then move the task to QA** — follow the lifecycle instructions at the top of this file.
 
 ---
 

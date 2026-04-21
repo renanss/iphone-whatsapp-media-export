@@ -5,17 +5,23 @@ Zero extra dependencies beyond the standard library.
 Run via:  python3 gui.py
 """
 
+import os
 import queue
+import shutil
+import sqlite3
 import sys
+import tempfile
 import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, font, scrolledtext, ttk
 
-from .backup import find_backup_path
-from .constants import DEFAULT_TYPES, FILE_TYPES
+from .backup import find_backup_path, find_chatstorage
+from .constants import DEFAULT_TYPES, FILE_TYPES, WHATSAPP_DOMAIN
+from .database import load_contact_map
 from .extractor import extract
+from .utils import extract_jid
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +56,12 @@ class App(tk.Tk):
         super().__init__()
         self.title('WhatsApp Media Extractor')
         self.resizable(True, True)
-        self.minsize(700, 560)
+        self.minsize(900, 580)
 
-        self._log_queue: queue.Queue = queue.Queue()
-        self._running   = False
+        self._log_queue: queue.Queue        = queue.Queue()
+        self._running                        = False
+        self._contacts_data: list[tuple]    = []   # (display_name, jid, count)
+        self._contacts_filtered: list[tuple] = []  # currently shown subset
 
         self._build_ui()
         self._auto_detect_backup()
@@ -64,15 +72,31 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        # Root split: left controls | right contact list
+        self._left  = ttk.Frame(self)
+        self._right = ttk.LabelFrame(self, text=' Contacts ', padding=8)
+
+        self._right.pack(side='right', fill='y', padx=(0, 10), pady=6)
+        self._left.pack(side='left', fill='both', expand=True)
+
+        self._build_left(self._left)
+        self._build_contacts(self._right)
+
+    # ------------------------------------------------------------------
+    # Left panel — all extraction controls
+    # ------------------------------------------------------------------
+
+    def _build_left(self, parent: ttk.Frame) -> None:
         pad = {'padx': 10, 'pady': 4}
 
         # ── Paths ──────────────────────────────────────────────────────
-        paths_frame = ttk.LabelFrame(self, text=' Paths ', padding=8)
+        paths_frame = ttk.LabelFrame(parent, text=' Paths ', padding=8)
         paths_frame.pack(fill='x', **pad)
         paths_frame.columnconfigure(1, weight=1)
 
         ttk.Label(paths_frame, text='Backup folder:').grid(row=0, column=0, sticky='w')
         self._backup_var = tk.StringVar()
+        self._backup_var.trace_add('write', lambda *_: self._on_backup_changed())
         ttk.Entry(paths_frame, textvariable=self._backup_var).grid(
             row=0, column=1, sticky='ew', padx=6)
         ttk.Button(paths_frame, text='Browse…', command=self._browse_backup).grid(
@@ -86,7 +110,7 @@ class App(tk.Tk):
             row=1, column=2, pady=(6, 0))
 
         # ── Filters ────────────────────────────────────────────────────
-        filters_frame = ttk.LabelFrame(self, text=' Filters ', padding=8)
+        filters_frame = ttk.LabelFrame(parent, text=' Filters ', padding=8)
         filters_frame.pack(fill='x', **pad)
         filters_frame.columnconfigure(1, weight=1)
         filters_frame.columnconfigure(3, weight=1)
@@ -112,7 +136,7 @@ class App(tk.Tk):
             row=1, column=4, sticky='w', pady=(6, 0))
 
         # ── File types ─────────────────────────────────────────────────
-        types_frame = ttk.LabelFrame(self, text=' File types ', padding=8)
+        types_frame = ttk.LabelFrame(parent, text=' File types ', padding=8)
         types_frame.pack(fill='x', **pad)
 
         self._type_vars: dict[str, tk.BooleanVar] = {}
@@ -125,26 +149,25 @@ class App(tk.Tk):
             'webp':  'WebP / stickers (opt-in)',
         }
         for col, (key, label) in enumerate(labels.items()):
-            default = key in DEFAULT_TYPES
-            var = tk.BooleanVar(value=default)
+            var = tk.BooleanVar(value=key in DEFAULT_TYPES)
             self._type_vars[key] = var
             ttk.Checkbutton(types_frame, text=label, variable=var).grid(
                 row=0, column=col, sticky='w', padx=8)
 
         # ── Options ────────────────────────────────────────────────────
-        opts_frame = ttk.Frame(self)
+        opts_frame = ttk.Frame(parent)
         opts_frame.pack(fill='x', **pad)
 
         self._dryrun_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts_frame, text='Dry run (simulate — no files copied)',
                         variable=self._dryrun_var).pack(side='left')
 
-        # ── Run button ─────────────────────────────────────────────────
-        btn_frame = ttk.Frame(self)
+        # ── Run / Stop ─────────────────────────────────────────────────
+        btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill='x', padx=10, pady=(2, 6))
 
         self._run_btn = ttk.Button(btn_frame, text='▶  Run Extraction',
-                                   command=self._run, style='Accent.TButton')
+                                   command=self._run)
         self._run_btn.pack(side='left')
 
         self._stop_btn = ttk.Button(btn_frame, text='■  Stop',
@@ -152,11 +175,11 @@ class App(tk.Tk):
         self._stop_btn.pack(side='left', padx=8)
 
         self._status_var = tk.StringVar(value='Ready.')
-        ttk.Label(btn_frame, textvariable=self._status_var, foreground='grey').pack(
-            side='left', padx=8)
+        ttk.Label(btn_frame, textvariable=self._status_var,
+                  foreground='grey').pack(side='left', padx=8)
 
         # ── Log ────────────────────────────────────────────────────────
-        log_frame = ttk.LabelFrame(self, text=' Log ', padding=4)
+        log_frame = ttk.LabelFrame(parent, text=' Log ', padding=4)
         log_frame.pack(fill='both', expand=True, padx=10, pady=(0, 10))
 
         mono = font.Font(family='Courier', size=10)
@@ -166,20 +189,74 @@ class App(tk.Tk):
             insertbackground='white',
         )
         self._log.pack(fill='both', expand=True)
-
-        # colour tags for the log
         self._log.tag_config('info',    foreground='#9cdcfe')
         self._log.tag_config('ok',      foreground='#4ec9b0')
         self._log.tag_config('warn',    foreground='#ce9178')
         self._log.tag_config('error',   foreground='#f44747')
         self._log.tag_config('section', foreground='#dcdcaa')
 
-        clear_btn = ttk.Button(log_frame, text='Clear log', command=self._clear_log)
-        clear_btn.pack(anchor='e', pady=(4, 0))
+        ttk.Button(log_frame, text='Clear log',
+                   command=self._clear_log).pack(anchor='e', pady=(4, 0))
 
     # ------------------------------------------------------------------
-    # Path helpers
+    # Right panel — contact list
     # ------------------------------------------------------------------
+
+    def _build_contacts(self, parent: ttk.LabelFrame) -> None:
+        # Load button
+        self._load_contacts_btn = ttk.Button(
+            parent, text='⟳  Load contacts', command=self._load_contacts)
+        self._load_contacts_btn.pack(fill='x')
+
+        # Search box
+        ttk.Label(parent, text='Search:', foreground='grey').pack(
+            anchor='w', pady=(8, 0))
+        self._contacts_search_var = tk.StringVar()
+        self._contacts_search_var.trace_add('write', lambda *_: self._filter_contacts_list())
+        ttk.Entry(parent, textvariable=self._contacts_search_var).pack(fill='x')
+
+        # Listbox + scrollbar
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill='both', expand=True, pady=(6, 0))
+
+        sb = ttk.Scrollbar(list_frame, orient='vertical')
+        sb.pack(side='right', fill='y')
+
+        self._contacts_lb = tk.Listbox(
+            list_frame,
+            yscrollcommand=sb.set,
+            selectmode='single',
+            width=28,
+            activestyle='dotbox',
+            background='#2d2d2d',
+            foreground='#d4d4d4',
+            selectbackground='#094771',
+            selectforeground='#ffffff',
+            font=('Helvetica', 11),
+        )
+        self._contacts_lb.pack(side='left', fill='both', expand=True)
+        sb.config(command=self._contacts_lb.yview)
+        self._contacts_lb.bind('<<ListboxSelect>>', self._on_contact_select)
+
+        # Status label
+        self._contacts_status_var = tk.StringVar(value='Not loaded')
+        ttk.Label(parent, textvariable=self._contacts_status_var,
+                  foreground='grey').pack(anchor='w', pady=(4, 0))
+
+        # Clear selection button
+        ttk.Button(parent, text='✕  Clear selection',
+                   command=self._clear_contact_selection).pack(fill='x', pady=(4, 0))
+
+    # ------------------------------------------------------------------
+    # Backup path helpers
+    # ------------------------------------------------------------------
+
+    def _on_backup_changed(self) -> None:
+        """Reset contact list whenever the backup path changes."""
+        self._contacts_data     = []
+        self._contacts_filtered = []
+        self._contacts_lb.delete(0, 'end')
+        self._contacts_status_var.set('Not loaded')
 
     def _auto_detect_backup(self) -> None:
         try:
@@ -200,6 +277,115 @@ class App(tk.Tk):
             self._output_var.set(path)
 
     # ------------------------------------------------------------------
+    # Contact list — load + filter + select
+    # ------------------------------------------------------------------
+
+    def _load_contacts(self) -> None:
+        backup_str = self._backup_var.get().strip()
+        if not backup_str:
+            self._log_append('[ERROR] Set the backup folder first.\n', 'error')
+            return
+        backup_path = Path(backup_str)
+        if not (backup_path / 'Manifest.db').exists():
+            self._log_append('[ERROR] No Manifest.db found in the backup folder.\n', 'error')
+            return
+
+        self._load_contacts_btn.config(state='disabled')
+        self._contacts_status_var.set('Loading…')
+        self._contacts_lb.delete(0, 'end')
+
+        threading.Thread(
+            target=self._fetch_contacts,
+            args=(backup_path,),
+            daemon=True,
+        ).start()
+
+    def _fetch_contacts(self, backup_path: Path) -> None:
+        """Background thread: reads contact map + media counts from the backup."""
+        try:
+            manifest_conn    = sqlite3.connect(str(backup_path / 'Manifest.db'))
+            chatstorage_src  = find_chatstorage(manifest_conn, backup_path)
+
+            with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
+                tmp_path = tmp.name
+            shutil.copy2(str(chatstorage_src), tmp_path)
+            chat_conn   = sqlite3.connect(tmp_path)
+            contact_map = load_contact_map(chat_conn)
+            chat_conn.close()
+            os.unlink(tmp_path)
+
+            # Count all media files per JID from Manifest.db
+            rows = manifest_conn.execute(
+                "SELECT relativePath FROM Files "
+                "WHERE domain = ? AND relativePath LIKE 'Message/Media/%' "
+                "AND relativePath NOT LIKE '%.thumb%' "
+                "AND relativePath NOT LIKE '%.mmsthumb%'",
+                (WHATSAPP_DOMAIN,),
+            ).fetchall()
+            manifest_conn.close()
+
+            counts: dict[str, int] = {}
+            for (rpath,) in rows:
+                jid = extract_jid(rpath)
+                if jid:
+                    counts[jid] = counts.get(jid, 0) + 1
+
+            # Build sorted list: contacts with media first, then by count desc
+            entries: list[tuple[str, str, int]] = []
+            for jid, name in contact_map.items():
+                entries.append((name or jid, jid, counts.get(jid, 0)))
+            entries.sort(key=lambda e: (-e[2], e[0].lower()))
+
+            self._contacts_data = entries
+            self.after(0, lambda: self._populate_contacts_list(entries))
+
+        except Exception as exc:
+            self.after(0, lambda: self._log_append(
+                f'[ERROR] Failed to load contacts: {exc}\n', 'error'))
+            self.after(0, lambda: self._load_contacts_btn.config(state='normal'))
+            self.after(0, lambda: self._contacts_status_var.set('Error loading contacts'))
+
+    def _populate_contacts_list(self, entries: list[tuple]) -> None:
+        self._contacts_filtered = entries
+        self._contacts_lb.delete(0, 'end')
+        for name, jid, count in entries:
+            tag  = ' 👥' if '@g.us' in jid else ''
+            line = f'{name}{tag}  ({count})' if count else f'{name}{tag}'
+            self._contacts_lb.insert('end', line)
+        self._contacts_status_var.set(f'{len(entries)} contacts')
+        self._load_contacts_btn.config(state='normal')
+
+    def _filter_contacts_list(self) -> None:
+        """Re-renders the listbox based on the search field."""
+        query = self._contacts_search_var.get().lower()
+        filtered = [
+            e for e in self._contacts_data
+            if query in e[0].lower() or query in e[1].lower()
+        ] if query else self._contacts_data
+
+        self._contacts_filtered = filtered
+        self._contacts_lb.delete(0, 'end')
+        for name, jid, count in filtered:
+            tag  = ' 👥' if '@g.us' in jid else ''
+            line = f'{name}{tag}  ({count})' if count else f'{name}{tag}'
+            self._contacts_lb.insert('end', line)
+
+        count_label = f'{len(filtered)} of {len(self._contacts_data)}' if query else f'{len(filtered)} contacts'
+        self._contacts_status_var.set(count_label)
+
+    def _on_contact_select(self, _event: tk.Event) -> None:
+        selection = self._contacts_lb.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        name = self._contacts_filtered[idx][0]
+        self._contact_var.set(name)
+
+    def _clear_contact_selection(self) -> None:
+        self._contacts_lb.selection_clear(0, 'end')
+        self._contact_var.set('')
+
+    # ------------------------------------------------------------------
     # Extraction
     # ------------------------------------------------------------------
 
@@ -210,7 +396,8 @@ class App(tk.Tk):
             d = datetime.strptime(value.strip(), '%Y-%m-%d')
             return d.replace(tzinfo=datetime.now().astimezone().tzinfo)
         except ValueError:
-            self._log_append(f'[ERROR] Invalid date for {label}: "{value}". Use YYYY-MM-DD.\n', 'error')
+            self._log_append(
+                f'[ERROR] Invalid date for {label}: "{value}". Use YYYY-MM-DD.\n', 'error')
             return None
 
     def _run(self) -> None:
@@ -228,17 +415,15 @@ class App(tk.Tk):
             return
 
         backup_path = Path(backup_str)
-        output_dir  = Path(output_str)
-
         if not (backup_path / 'Manifest.db').exists():
             self._log_append(
                 f'[ERROR] No Manifest.db found in: {backup_path}\n'
                 '        Make sure this is a valid iPhone backup folder.\n', 'error')
             return
 
-        date_from = self._parse_date(self._from_var.get(), '--from')
+        date_from   = self._parse_date(self._from_var.get(), '--from')
         date_to_raw = self._parse_date(self._to_var.get(), '--to')
-        date_to = date_to_raw.replace(hour=23, minute=59, second=59) if date_to_raw else None
+        date_to     = date_to_raw.replace(hour=23, minute=59, second=59) if date_to_raw else None
 
         file_types = {k for k, v in self._type_vars.items() if v.get()}
         if not file_types:
@@ -255,7 +440,8 @@ class App(tk.Tk):
 
         self._thread = threading.Thread(
             target=self._run_extract,
-            args=(backup_path, output_dir, dry_run, contact, file_types, date_from, date_to),
+            args=(Path(backup_str), Path(output_str),
+                  dry_run, contact, file_types, date_from, date_to),
             daemon=True,
         )
         self._thread.start()
@@ -270,8 +456,7 @@ class App(tk.Tk):
         date_from: datetime | None,
         date_to: datetime | None,
     ) -> None:
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
+        old_out, old_err = sys.stdout, sys.stderr
         stream = _QueueStream(self._log_queue)
         sys.stdout = stream  # type: ignore[assignment]
         sys.stderr = stream  # type: ignore[assignment]
@@ -290,14 +475,10 @@ class App(tk.Tk):
         except Exception as e:
             self._log_queue.put(f'[ERROR] Unexpected error: {e}\n')
         finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-            self._log_queue.put(None)  # sentinel → extraction finished
+            sys.stdout, sys.stderr = old_out, old_err
+            self._log_queue.put(None)  # sentinel → done
 
     def _stop(self) -> None:
-        # Threads can't be forcibly killed in Python; we just update the UI.
-        # The extraction loop will finish its current file and the sentinel
-        # will arrive naturally.
         self._status_var.set('Stopping after current file…')
         self._stop_btn.config(state='disabled')
 
@@ -307,20 +488,17 @@ class App(tk.Tk):
 
     def _log_append(self, text: str, tag: str = '') -> None:
         self._log.config(state='normal')
-        if tag:
-            self._log.insert('end', text, tag)
-        else:
-            self._log.insert('end', text)
+        self._log.insert('end', text, tag if tag else '')
         self._log.config(state='disabled')
         self._log.see('end')
 
     def _tag_for_line(self, line: str) -> str:
-        l = line.upper()
-        if '[ERROR]' in l:   return 'error'
-        if '[WARNING]' in l: return 'warn'
-        if '[INFO]' in l:    return 'info'
-        if '===' in l or '---' in l or 'FINAL REPORT' in l: return 'section'
-        if '[' in l and '/' in l: return 'ok'   # progress lines like [  123/45678]
+        u = line.upper()
+        if '[ERROR]'   in u: return 'error'
+        if '[WARNING]' in u: return 'warn'
+        if '[INFO]'    in u: return 'info'
+        if '===' in u or '---' in u or 'FINAL REPORT' in u: return 'section'
+        if '[' in u and '/' in u: return 'ok'
         return ''
 
     def _clear_log(self) -> None:
@@ -329,19 +507,16 @@ class App(tk.Tk):
         self._log.config(state='disabled')
 
     def _poll_log(self) -> None:
-        """Drains the queue and writes lines to the log widget. Runs on main thread."""
         try:
             while True:
                 item = self._log_queue.get_nowait()
                 if item is None:
-                    # extraction finished
                     self._running = False
                     self._run_btn.config(state='normal')
                     self._stop_btn.config(state='disabled')
                     self._status_var.set('Done.')
                 else:
-                    tag = self._tag_for_line(item)
-                    self._log_append(item, tag)
+                    self._log_append(item, self._tag_for_line(item))
         except queue.Empty:
             pass
         self.after(100, self._poll_log)

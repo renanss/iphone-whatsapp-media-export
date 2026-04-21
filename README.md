@@ -13,24 +13,31 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 - Organizes files by **contact/group → year-month**
 - Renames files with **contact name + phone number + original timestamp**
 - Writes rich **EXIF metadata** (DateTimeOriginal, OffsetTimeOriginal, Artist, Description, UserComment)
-- Sets **macOS Spotlight attributes** (Title, Keywords, Authors, ContentCreationDate)
+- **macOS**: sets Spotlight attributes (Title, Keywords, Authors, ContentCreationDate) via `xattr`
+- **Windows / Linux**: writes an **XMP sidecar** (`.xmp`) alongside each file — readable by Lightroom, digiKam and most DAM tools
 - Corrects **filesystem timestamps** to the original message date
 - Marks media as **sent** or **received**
 - **Documents are isolated** in a `_Documents/` folder so iCloud Photos imports stay clean
 - Supports **dry-run**, **date range**, **random sampling**, **contact filter**, **type filter** and more
+- **Graphical interface** (`gui.py`) for non-terminal users — zero extra dependencies
 
 ---
 
 ## 🔧 Requirements
 
-- macOS (uses native `setxattr` for Spotlight metadata)
-- iPhone local backup via Finder — **unencrypted**
+- **macOS, Windows or Linux**
+- iPhone local backup via Finder / iTunes — **unencrypted**
 - Python 3.10+
 - Optional but recommended: [`piexif`](https://pypi.org/project/piexif/) for EXIF writing
 
 ```bash
 pip3 install piexif --break-system-packages
 ```
+
+> **macOS + tkinter**: if `python3 gui.py` fails with a tkinter error, install the binding:
+> ```bash
+> brew install python-tk@3.14   # match your Python version
+> ```
 
 ---
 
@@ -57,6 +64,16 @@ python3 list_contacts.py
 This shows all contacts and groups with their media counts, so you can choose who to export.
 
 ### 4. Run the extractor
+
+**Option A — Graphical interface (recommended for most users):**
+
+```bash
+python3 gui.py
+```
+
+The GUI auto-detects your backup, lets you browse contacts, apply filters, and watch the live log — no terminal knowledge needed.
+
+**Option B — Command line:**
 
 ```bash
 python3 extract_whatsapp_media.py
@@ -90,27 +107,50 @@ WhatsApp_Media_Export/
 
 ---
 
+## 🖥️ GUI — Graphical Interface
+
+```bash
+python3 gui.py
+```
+
+| Feature | Details |
+|---|---|
+| Backup folder | Auto-detected on launch; Browse button to override |
+| Output folder | Configurable via Browse button |
+| Contact list | Click **⟳ Load contacts** to populate a scrollable list sorted by file count |
+| Multi-select | Shift-click for ranges, Cmd/Ctrl-click for individual picks; shows *"N contacts selected"* |
+| Search contacts | Live filter as you type inside the contact panel |
+| Date range | From / To fields with YYYY-MM-DD validation |
+| File type toggles | Checkboxes matching CLI defaults (gif and webp opt-in) |
+| Dry run | Toggle to preview without copying any files |
+| Live log | Colour-coded output (info, progress, warning, error) streamed in real time |
+| Non-blocking | Extraction runs in a background thread — window stays responsive |
+
+---
+
 ## 🏷️ Metadata Written
 
 Each exported file gets:
 
-| Field | Example |
-|---|---|
-| Filename | `John_Smith_15519999999_2025-12-13_17-39-44.jpg` |
-| EXIF DateTimeOriginal | `2025:12:13 17:39:44` (local time) |
-| EXIF OffsetTimeOriginal | `-03:00` |
-| EXIF Artist | `John Smith` |
-| EXIF ImageDescription | `WhatsApp · Contact: John Smith · 12/13/2025 at 17:39` |
-| EXIF UserComment | JSON with contact, phone, jid, date, direction, file type |
-| Spotlight Title | `John Smith · 2025-12-13 17:39` |
-| Spotlight Keywords | `WhatsApp, Contact, John Smith, 15519999999, received, img, 2025, 2025-12` |
-| Spotlight Authors | `John Smith` |
-| ContentCreationDate | Original message date |
-| Filesystem mtime | Original message date |
+| Field | macOS | Windows / Linux |
+|---|---|---|
+| Filename | `John_Smith_15519999999_2025-12-13_17-39-44.jpg` | same |
+| EXIF DateTimeOriginal | ✅ (JPEG only) | ✅ (JPEG only) |
+| EXIF OffsetTimeOriginal | ✅ | ✅ |
+| EXIF Artist / Description | ✅ | ✅ |
+| Spotlight xattr (Title, Keywords, Authors, ContentCreationDate) | ✅ | — |
+| XMP sidecar (`.xmp`) | — | ✅ |
+| Filesystem mtime | ✅ | ✅ |
+
+**XMP sidecar** fields (Windows / Linux): `dc:title`, `dc:description`, `dc:creator`, `dc:subject` (keywords), `xmp:CreateDate` — compatible with Lightroom, digiKam, and most DAM tools.
+
+**Example Spotlight keywords (macOS):** `WhatsApp, Contact, John Smith, 15519999999, received, img, 2025, 2025-12`
 
 ---
 
-## ⚙️ extract_whatsapp_media.py — All Options
+## ⚙️ CLI Reference
+
+### extract_whatsapp_media.py
 
 ```
 python3 extract_whatsapp_media.py [options]
@@ -199,7 +239,7 @@ python3 extract_whatsapp_media.py --output ~/Desktop/MyWhatsAppExport
 
 ---
 
-## ⚙️ list_contacts.py — All Options
+### list_contacts.py
 
 ```
 python3 list_contacts.py [options]
@@ -254,9 +294,11 @@ To free up space on your iPhone after verifying the export:
 
 - This tool only reads from your backup — it never modifies your iPhone or WhatsApp data
 - Works with **unencrypted** backups only
-- Tested on macOS with Python 3.13 and WhatsApp backups from 2017–2025
+- Tested on macOS with Python 3.13/3.14 and WhatsApp backups from 2017–2025
 - The Apple timestamp epoch starts at `2001-01-01 00:00:00 UTC` (not Unix epoch)
 - GIFs sent via WhatsApp are stored as `.mp4` files internally; the tool detects them via `ZMESSAGETYPE=15` and classifies them correctly
+- On **Windows**, the backup is auto-detected at `%APPDATA%\Apple Computer\MobileSync\Backup\`
+- On **Linux** (iTunes via Wine), the backup is auto-detected at `~/.wine/…`; use `--backup` to specify the path manually if needed
 
 ---
 

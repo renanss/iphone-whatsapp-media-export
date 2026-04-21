@@ -60,8 +60,9 @@ class App(tk.Tk):
 
         self._log_queue: queue.Queue        = queue.Queue()
         self._running                        = False
-        self._contacts_data: list[tuple]    = []   # (display_name, jid, count)
-        self._contacts_filtered: list[tuple] = []  # currently shown subset
+        self._contacts_data: list[tuple]     = []   # (display_name, jid, count)
+        self._contacts_filtered: list[tuple] = []   # currently shown subset
+        self._selected_jids: set[str]        = set() # JIDs chosen from the list
 
         self._build_ui()
         self._auto_detect_backup()
@@ -225,7 +226,7 @@ class App(tk.Tk):
         self._contacts_lb = tk.Listbox(
             list_frame,
             yscrollcommand=sb.set,
-            selectmode='single',
+            selectmode='extended',   # shift-click range, cmd/ctrl-click individual
             width=28,
             activestyle='dotbox',
             background='#2d2d2d',
@@ -243,7 +244,11 @@ class App(tk.Tk):
         ttk.Label(parent, textvariable=self._contacts_status_var,
                   foreground='grey').pack(anchor='w', pady=(4, 0))
 
-        # Clear selection button
+        # Selection summary + clear
+        self._selection_label_var = tk.StringVar(value='')
+        ttk.Label(parent, textvariable=self._selection_label_var,
+                  foreground='#4ec9b0').pack(anchor='w')
+
         ttk.Button(parent, text='✕  Clear selection',
                    command=self._clear_contact_selection).pack(fill='x', pady=(4, 0))
 
@@ -255,8 +260,11 @@ class App(tk.Tk):
         """Reset contact list whenever the backup path changes."""
         self._contacts_data     = []
         self._contacts_filtered = []
+        self._selected_jids     = set()
         self._contacts_lb.delete(0, 'end')
         self._contacts_status_var.set('Not loaded')
+        self._selection_label_var.set('')
+        self._contact_var.set('')
 
     def _auto_detect_backup(self) -> None:
         try:
@@ -374,16 +382,28 @@ class App(tk.Tk):
         self._contacts_status_var.set(count_label)
 
     def _on_contact_select(self, _event: tk.Event) -> None:
-        selection = self._contacts_lb.curselection()
-        if not selection:
+        indices = self._contacts_lb.curselection()
+        if not indices:
+            self._selected_jids = set()
+            self._selection_label_var.set('')
+            self._contact_var.set('')
             return
-        idx = selection[0]
-        name = self._contacts_filtered[idx][0]
-        self._contact_var.set(name)
+
+        selected = [self._contacts_filtered[i] for i in indices]
+        self._selected_jids = {e[1] for e in selected}   # set of JIDs
+
+        if len(selected) == 1:
+            self._contact_var.set(selected[0][0])
+            self._selection_label_var.set('')
+        else:
+            self._contact_var.set('')
+            self._selection_label_var.set(f'{len(selected)} contacts selected')
 
     def _clear_contact_selection(self) -> None:
         self._contacts_lb.selection_clear(0, 'end')
+        self._selected_jids = set()
         self._contact_var.set('')
+        self._selection_label_var.set('')
 
     # ------------------------------------------------------------------
     # Extraction
@@ -430,7 +450,10 @@ class App(tk.Tk):
             self._log_append('[ERROR] Select at least one file type.\n', 'error')
             return
 
-        contact = self._contact_var.get().strip() or None
+        # JID-based filter wins when contacts were loaded from the list;
+        # fall back to the text field otherwise.
+        filter_jids   = self._selected_jids if self._selected_jids else None
+        filter_contact = None if filter_jids else (self._contact_var.get().strip() or None)
         dry_run = self._dryrun_var.get()
 
         self._running = True
@@ -441,7 +464,7 @@ class App(tk.Tk):
         self._thread = threading.Thread(
             target=self._run_extract,
             args=(Path(backup_str), Path(output_str),
-                  dry_run, contact, file_types, date_from, date_to),
+                  dry_run, filter_contact, filter_jids, file_types, date_from, date_to),
             daemon=True,
         )
         self._thread.start()
@@ -451,7 +474,8 @@ class App(tk.Tk):
         backup_path: Path,
         output_dir: Path,
         dry_run: bool,
-        contact: str | None,
+        filter_contact: str | None,
+        filter_jids: set[str] | None,
         file_types: set[str],
         date_from: datetime | None,
         date_to: datetime | None,
@@ -465,7 +489,8 @@ class App(tk.Tk):
                 backup_path=backup_path,
                 output_dir=output_dir,
                 dry_run=dry_run,
-                filter_contact=contact,
+                filter_contact=filter_contact,
+                filter_jids=filter_jids,
                 file_types=file_types,
                 date_from=date_from,
                 date_to=date_to,

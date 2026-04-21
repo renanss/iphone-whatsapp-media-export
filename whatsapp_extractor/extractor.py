@@ -68,6 +68,7 @@ def extract(
     output_dir: Path,
     dry_run: bool = False,
     filter_contact: str | None = None,
+    filter_jids: set[str] | None = None,
     single_file: str | None = None,
     random_sample: int | None = None,
     inspect: bool = False,
@@ -128,8 +129,17 @@ def extract(
         print(f'[INFO] Date range filter      : {label_from} → {label_to}')
         print(f'[INFO] Files after date filter: {len(all_files)}')
 
-    # Filter by contact name
-    if filter_contact:
+    # Filter by contact — filter_jids (exact JIDs, from GUI) takes priority
+    # over filter_contact (substring name match, from CLI).
+    if filter_jids is not None:
+        all_files = [
+            (fid, rpath) for fid, rpath in all_files
+            if extract_jid(rpath) in filter_jids
+        ]
+        names = [contact_map.get(j, j) for j in filter_jids]
+        print(f'[INFO] Contact filter ({len(filter_jids)}): {", ".join(sorted(names))}')
+        print(f'[INFO] Files after contact filter : {len(all_files)}')
+    elif filter_contact:
         filter_lower = filter_contact.lower()
         matching_jids = {
             jid for jid, name in contact_map.items()

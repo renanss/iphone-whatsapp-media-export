@@ -1,7 +1,7 @@
 # QA — Task 12: Android Backup Support
 
 **Branch:** `feature/12-android-support`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/TBD
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/2
 **Dev completed by:** Agent 2
 
 ---

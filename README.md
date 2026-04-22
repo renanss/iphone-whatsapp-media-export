@@ -1,6 +1,6 @@
-# 📱 iPhone WhatsApp Media Export
+# 📱 WhatsApp Media Export
 
-Extract, organize, and archive your WhatsApp media from a local iPhone backup — with rich metadata, proper timestamps, and iCloud-ready structure.
+Extract, organize, and archive your WhatsApp media from local iPhone backups or Android WhatsApp folders — with rich metadata, proper timestamps, reports, and Photos-friendly output.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support%20this%20project-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/renanssn)
 
@@ -8,8 +8,8 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 
 ## ✨ Features
 
-- Extracts **all media** from a local iPhone backup — **encrypted or unencrypted**
-- Extracts media from a local **Android WhatsApp folder** with `extract_android.py --platform android`
+- Extracts **all media** from local iPhone backups — **encrypted or unencrypted**
+- Extracts media from local **Android WhatsApp folders** with `extract_android.py --platform android`
 - Supports **photos, videos, audio, documents, GIFs and stickers (webp)**
 - Organizes files by **contact/group → year-month**
 - Renames files with **contact name + phone number + original timestamp**
@@ -23,14 +23,15 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 - **Duplicate detection**: repeated `fileID`s (forwards) are only copied once
 - **Live progress bar** when `tqdm` is installed (falls back to line output otherwise)
 - Supports **dry-run**, **date range**, **random sampling**, **contact filter**, **type filter** and more
-- **Graphical interface** (`gui.py`) for non-terminal users — zero extra dependencies
+- **Graphical interface** (`gui.py`) for iPhone backups — zero extra dependencies
 
 ---
 
 ## 🔧 Requirements
 
 - **macOS, Windows or Linux**
-- iPhone local backup via Finder / iTunes (encrypted backups supported via `--password`)
+- For iPhone: local backup via Finder / iTunes (encrypted backups supported via `--password`)
+- For Android: a local copy of the WhatsApp folder containing `msgstore.db` and `Media/`
 - Python 3.10+
 - Optional but recommended:
   - [`piexif`](https://pypi.org/project/piexif/) for EXIF writing
@@ -52,37 +53,38 @@ pip3 install iphone-backup-decrypt --break-system-packages
 
 ## 🚀 Quick Start
 
-### 1. Create a local iPhone backup
+### 1. Prepare your WhatsApp data
 
-Open **Finder → your iPhone → Back Up Now**.
-Encrypted backups are fully supported — just pass `--password` (or `--password -` to be prompted) when running the extractor.
+For iPhone, open **Finder → your iPhone → Back Up Now**. Encrypted backups are fully supported — just pass `--password` (or `--password -` to be prompted) when running the extractor.
+
+For Android, copy the WhatsApp folder locally. The folder should contain `msgstore.db` and `Media/`.
 
 ### 2. Clone the repository
 
 ```bash
-git clone https://github.com/renanss/iphone-whatsapp-media-export.git
-cd iphone-whatsapp-media-export
+git clone https://github.com/renanss/whatsapp-media-export.git
+cd whatsapp-media-export
 ```
 
-### 3. List your contacts
+### 3. List iPhone contacts
 
 ```bash
 python3 list_contacts.py
 ```
 
-This shows all contacts and groups with their media counts, so you can choose who to export.
+For iPhone backups, this shows all contacts and groups with their media counts, so you can choose who to export. For Android, use `extract_android.py --dry-run` or filters directly against the Android backup folder.
 
 ### 4. Run the extractor
 
-**Option A — Graphical interface (recommended for most users):**
+**Option A — Graphical interface for iPhone backups (recommended for most iPhone users):**
 
 ```bash
 python3 gui.py
 ```
 
-The GUI auto-detects your backup, lets you browse contacts, apply filters, and watch the live log — no terminal knowledge needed.
+The GUI auto-detects iPhone backups when possible, lets you browse contacts, apply filters, export reports, and watch the live log — no terminal knowledge needed.
 
-**Option B — Command line:**
+**Option B — iPhone command line:**
 
 ```bash
 python3 extract_whatsapp_media.py
@@ -90,7 +92,7 @@ python3 extract_whatsapp_media.py
 
 Output is saved to `./WhatsApp_Media_Export/` by default.
 
-### Android backup
+**Option C — Android command line:**
 
 For Android, point `--backup` at a local copy of the WhatsApp folder that
 contains `msgstore.db` and `Media/`:
@@ -170,7 +172,7 @@ Each exported file gets:
 
 ## ⚙️ CLI Reference
 
-### extract_whatsapp_media.py
+### extract_whatsapp_media.py — iPhone backups
 
 ```
 python3 extract_whatsapp_media.py [options]
@@ -227,7 +229,7 @@ python3 extract_whatsapp_media.py [options]
 
 ---
 
-## ⚙️ extract_android.py — Android Options
+## ⚙️ extract_android.py — Android WhatsApp Folders
 
 ```
 python3 extract_android.py --platform android --backup /path/to/WhatsApp [options]
@@ -297,7 +299,7 @@ single column layout. It also accepts Android 11+ media paths such as
 ## 💡 Examples
 
 ```bash
-# Full extraction (default: img, video, audio, doc)
+# Full iPhone extraction (default: img, video, audio, doc)
 python3 extract_whatsapp_media.py
 
 # Dry run — preview without copying anything
@@ -366,7 +368,7 @@ python3 extract_android.py --platform android --backup /path/to/WhatsApp --outpu
 
 ---
 
-### list_contacts.py
+### list_contacts.py — iPhone backups
 
 ```
 python3 list_contacts.py [options]
@@ -393,7 +395,9 @@ python3 list_contacts.py --filter "john"
 
 ## 🗂️ How It Works
 
-iPhone backups store all files as SHA1-hashed blobs in a flat directory structure. This tool:
+The tool has separate readers for iPhone and Android because WhatsApp stores the same media in different ways on each platform.
+
+For iPhone backups, files are stored as SHA1-hashed blobs in a flat backup directory. The iPhone extractor:
 
 1. Reads `Manifest.db` to map SHA1 hashes → original file paths
 2. Reads `ChatStorage.sqlite` (WhatsApp's internal database) to get contact names, message timestamps and direction (sent/received)
@@ -402,9 +406,16 @@ iPhone backups store all files as SHA1-hashed blobs in a flat directory structur
 5. Writes rich metadata so iCloud Photos, Finder, and Spotlight can properly index everything
 6. Routes documents to a separate `_Documents/` folder to keep media imports clean
 
+For Android folders, media files are already present under `Media/`. The Android extractor:
+
+1. Reads `msgstore.db` for messages and media references
+2. Reads `wa.db` when available for contact names
+3. Resolves media files directly from the local WhatsApp `Media/` tree
+4. Reuses the same output structure, naming rules and metadata writer as the iPhone extractor
+
 ---
 
-## 📲 After Export — Import to iCloud Photos
+## 📲 After Export — Import to Photos
 
 1. Open the **Photos** app on Mac
 2. **File → Import** → select the `WhatsApp_Media_Export` folder
@@ -412,14 +423,14 @@ iPhone backups store all files as SHA1-hashed blobs in a flat directory structur
 
 > **Tip:** skip the `_Documents/` subfolder when importing to Photos — it contains PDFs and other non-media files.
 
-To free up space on your iPhone after verifying the export:
+To free up space on your phone after verifying the export:
 **WhatsApp → Settings → Storage → Manage** → clear media per conversation.
 
 ---
 
 ## ⚠️ Notes
 
-- This tool only reads from your backup — it never modifies your iPhone or WhatsApp data
+- This tool only reads from your backup or copied WhatsApp folder — it never modifies your phone or WhatsApp data
 - Works with **both encrypted and unencrypted** iPhone backups; encrypted backups need `iphone-backup-decrypt` and `--password`
 - Passwords are read via `getpass` when using `--password -`, never printed, logged, or persisted
 - Tested on macOS with Python 3.13/3.14 and WhatsApp backups from 2017–2025

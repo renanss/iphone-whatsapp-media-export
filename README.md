@@ -8,7 +8,7 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 
 ## ✨ Features
 
-- Extracts **all media** from a local iPhone backup (no decryption needed)
+- Extracts **all media** from a local iPhone backup — **encrypted or unencrypted**
 - Extracts media from a local **Android WhatsApp folder** with `extract_android.py --platform android`
 - Supports **photos, videos, audio, documents, GIFs and stickers (webp)**
 - Organizes files by **contact/group → year-month**
@@ -19,6 +19,9 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 - Corrects **filesystem timestamps** to the original message date
 - Marks media as **sent** or **received**
 - **Documents are isolated** in a `_Documents/` folder so iCloud Photos imports stay clean
+- **Resume-safe**: re-runs skip files that already exist with matching size
+- **Duplicate detection**: repeated `fileID`s (forwards) are only copied once
+- **Live progress bar** when `tqdm` is installed (falls back to line output otherwise)
 - Supports **dry-run**, **date range**, **random sampling**, **contact filter**, **type filter** and more
 - **Graphical interface** (`gui.py`) for non-terminal users — zero extra dependencies
 
@@ -27,12 +30,17 @@ Extract, organize, and archive your WhatsApp media from a local iPhone backup �
 ## 🔧 Requirements
 
 - **macOS, Windows or Linux**
-- iPhone local backup via Finder / iTunes — **unencrypted**
+- iPhone local backup via Finder / iTunes (encrypted backups supported via `--password`)
 - Python 3.10+
-- Optional but recommended: [`piexif`](https://pypi.org/project/piexif/) for EXIF writing
+- Optional but recommended:
+  - [`piexif`](https://pypi.org/project/piexif/) for EXIF writing
+  - [`tqdm`](https://pypi.org/project/tqdm/) for a live progress bar
+  - [`iphone-backup-decrypt`](https://pypi.org/project/iphone-backup-decrypt/) only if your backup is encrypted
 
 ```bash
-pip3 install piexif --break-system-packages
+pip3 install piexif tqdm --break-system-packages
+# Only if your iPhone backup is encrypted:
+pip3 install iphone-backup-decrypt --break-system-packages
 ```
 
 > **macOS + tkinter**: if `python3 gui.py` fails with a tkinter error, install the binding:
@@ -47,7 +55,7 @@ pip3 install piexif --break-system-packages
 ### 1. Create a local iPhone backup
 
 Open **Finder → your iPhone → Back Up Now**.
-Make sure encryption is **disabled**.
+Encrypted backups are fully supported — just pass `--password` (or `--password -` to be prompted) when running the extractor.
 
 ### 2. Clone the repository
 
@@ -174,6 +182,7 @@ python3 extract_whatsapp_media.py [options]
 | `--output PATH` | Output folder. Default: `./WhatsApp_Media_Export` |
 | `--dry-run` | Simulate the extraction without copying any files. Shows exactly what would be exported |
 | `--inspect-db` | Print the `ChatStorage.sqlite` schema and exit. Useful for debugging or unsupported WhatsApp versions |
+| `--password PASS` | Passphrase for encrypted iPhone backups. Use `--password -` to be prompted interactively (input is hidden and never logged). Requires `iphone-backup-decrypt` |
 
 ### Filtering
 
@@ -254,6 +263,23 @@ single column layout. It also accepts Android 11+ media paths such as
 
 ---
 
+## 🔁 Resume, Duplicates & Progress
+
+- **Resume-safe re-runs** — if the same `--output` path already contains a
+  file whose size matches the source, it is logged as `[SKIPPED]` and not
+  re-copied. If the size differs (e.g. truncated or corrupted file), it is
+  re-copied. The final report shows a `Skipped` counter.
+- **Duplicate detection** — WhatsApp stores forwarded media under the same
+  `fileID`. Each `fileID` is copied at most once per run; repeats are
+  logged as `[DUPLICATE]` and shown in the final report as
+  `Duplicates skipped`.
+- **Progress bar** — if `tqdm` is installed, a live progress bar replaces
+  the per-file output during real extractions. Dry-run always keeps the
+  per-line preview so you can audit the plan. Install with
+  `pip3 install tqdm --break-system-packages`.
+
+---
+
 ## 💡 Examples
 
 ```bash
@@ -283,6 +309,12 @@ python3 extract_whatsapp_media.py --contact "John" --from 2024-06-01 --to 2024-0
 
 # Random sample of 10 files for testing
 python3 extract_whatsapp_media.py --random 10 --dry-run
+
+# Encrypted backup — pass the passphrase
+python3 extract_whatsapp_media.py --password "my iTunes passphrase"
+
+# Encrypted backup — prompt for the passphrase (hidden input)
+python3 extract_whatsapp_media.py --password -
 
 # Only documents
 python3 extract_whatsapp_media.py --type doc
@@ -350,7 +382,8 @@ To free up space on your iPhone after verifying the export:
 ## ⚠️ Notes
 
 - This tool only reads from your backup — it never modifies your iPhone or WhatsApp data
-- Works with **unencrypted** backups only
+- Works with **both encrypted and unencrypted** iPhone backups; encrypted backups need `iphone-backup-decrypt` and `--password`
+- Passwords are read via `getpass` when using `--password -`, never printed, logged, or persisted
 - Tested on macOS with Python 3.13/3.14 and WhatsApp backups from 2017–2025
 - The Apple timestamp epoch starts at `2001-01-01 00:00:00 UTC` (not Unix epoch)
 - GIFs sent via WhatsApp are stored as `.mp4` files internally; the tool detects them via `ZMESSAGETYPE=15` and classifies them correctly

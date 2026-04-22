@@ -1,11 +1,16 @@
 """
 Backup discovery — locates the iPhone backup directory and key files within it.
+
+Also exposes helpers for handling encrypted backups. `iphone-backup-decrypt`
+is imported lazily so the dependency is only required when the user actually
+passes `--password`.
 """
 
 import os
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 from .constants import WHATSAPP_DOMAIN
 
@@ -87,3 +92,49 @@ def find_chatstorage(manifest_conn: sqlite3.Connection, backup_path: Path) -> Pa
         sys.exit(f'[ERROR] Physical ChatStorage file not found: {src}')
 
     return src
+
+
+# ---------------------------------------------------------------------------
+# Encrypted backup support
+# ---------------------------------------------------------------------------
+
+def is_backup_encrypted(backup_path: Path) -> bool:
+    """
+    Heuristically detect whether a backup is encrypted.
+    Checks `Manifest.plist` for `IsEncrypted = True`.
+    """
+    manifest_plist = backup_path / 'Manifest.plist'
+    if not manifest_plist.exists():
+        return False
+    try:
+        import plistlib
+        with manifest_plist.open('rb') as f:
+            data = plistlib.load(f)
+        return bool(data.get('IsEncrypted', False))
+    except Exception:
+        return False
+
+
+def open_encrypted_backup(backup_path: Path, password: str) -> Any:
+    """
+    Opens an encrypted iPhone backup and returns an `EncryptedBackup` instance.
+
+    The library loads `Manifest.db` into a temporary decrypted copy in memory/tmp;
+    callers should keep the returned handle alive for the duration of extraction
+    and avoid logging the password.
+    """
+    try:
+        from iphone_backup_decrypt import EncryptedBackup
+    except ImportError:
+        sys.exit(
+            '[ERROR] iphone-backup-decrypt is required for --password.\n'
+            '        Install with: pip3 install iphone-backup-decrypt --break-system-packages'
+        )
+
+    try:
+        enc = EncryptedBackup(backup_directory=str(backup_path), passphrase=password)
+        enc.test_decryption()
+    except Exception as exc:
+        sys.exit(f'[ERROR] Could not decrypt backup (wrong password?): {exc}')
+
+    return enc

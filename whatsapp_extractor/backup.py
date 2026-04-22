@@ -50,6 +50,17 @@ def _mobilesync_candidates() -> list[Path]:
     return candidates
 
 
+def _iter_backup_dirs(base: Path) -> list[Path]:
+    """Returns readable child backup directories that contain Manifest.db."""
+    try:
+        return [
+            d for d in base.iterdir()
+            if d.is_dir() and (d / 'Manifest.db').exists()
+        ]
+    except (OSError, PermissionError):
+        return []
+
+
 def find_backup_path() -> Path:
     """
     Locates the iPhone backup directory.
@@ -59,7 +70,7 @@ def find_backup_path() -> Path:
     """
     # 1. Project root (two levels up from this file)
     project_dir = Path(__file__).parent.parent
-    local = [d for d in project_dir.iterdir() if d.is_dir() and (d / 'Manifest.db').exists()]
+    local = _iter_backup_dirs(project_dir)
     if local:
         local.sort(key=lambda d: (d / 'Manifest.db').stat().st_mtime, reverse=True)
         return local[0]
@@ -67,7 +78,7 @@ def find_backup_path() -> Path:
     # 2. Platform-specific MobileSync location
     for base in _mobilesync_candidates():
         if base.exists():
-            backups = [d for d in base.iterdir() if d.is_dir() and (d / 'Manifest.db').exists()]
+            backups = _iter_backup_dirs(base)
             if backups:
                 backups.sort(key=lambda d: (d / 'Manifest.db').stat().st_mtime, reverse=True)
                 return backups[0]

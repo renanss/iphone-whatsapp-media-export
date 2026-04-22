@@ -32,6 +32,15 @@ def main() -> None:
         help='Simulate extraction without copying any files'
     )
     parser.add_argument(
+        '--stats-only', action='store_true',
+        help='Print aggregate backup statistics without copying or listing every file'
+    )
+    parser.add_argument(
+        '--report', type=Path, default=None,
+        metavar='PATH',
+        help='Write a structured extraction or stats report to .json or .csv'
+    )
+    parser.add_argument(
         '--contact', type=str, default=None,
         metavar='NAME',
         help='Extract only files from contacts whose name contains NAME (case-insensitive)'
@@ -212,6 +221,8 @@ def main() -> None:
         min_size=min_size,
         max_size=max_size,
         group_filter=group_filter,
+        stats_only=args.stats_only,
+        report_path=args.report,
         password=password,
     )
 

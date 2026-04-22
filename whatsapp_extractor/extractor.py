@@ -2,14 +2,18 @@
 Core extraction logic — builds destination paths and drives the extraction loop.
 """
 
+import csv
+import json
 import os
 import random
 import shutil
 import sqlite3
 import sys
 import tempfile
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .backup import find_backup_path, find_chatstorage, is_backup_encrypted, open_encrypted_backup
 from .constants import DOCS_FOLDER, FILE_TYPES, GIF_MESSAGE_TYPES, WHATSAPP_DOMAIN
@@ -28,6 +32,126 @@ def _format_size(num_bytes: int | None) -> str:
                 return f'{int(value)} bytes'
             return f'{value:.1f} {unit}'
         value /= 1024
+
+
+def _empty_summary() -> dict[str, Any]:
+    return {
+        'total_files': 0,
+        'total_size_bytes': 0,
+        'total_size_gb': 0.0,
+        'by_type': {},
+        'by_contact': {},
+        'by_month': {},
+        'date_range': {'earliest': None, 'latest': None},
+    }
+
+
+def _build_report_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return _empty_summary()
+
+    by_type = Counter(record['type'] for record in records)
+    by_contact = Counter(record['contact'] for record in records)
+    by_month = Counter(record['month'] for record in records if record['month'])
+    dates = sorted(record['date'] for record in records if record['date'])
+    total_size = sum(record['size'] or 0 for record in records)
+
+    return {
+        'total_files': len(records),
+        'total_size_bytes': total_size,
+        'total_size_gb': round(total_size / 1_073_741_824, 4),
+        'by_type': dict(sorted(by_type.items())),
+        'by_contact': dict(sorted(by_contact.items(), key=lambda item: (-item[1], item[0]))),
+        'by_month': dict(sorted(by_month.items())),
+        'date_range': {
+            'earliest': dates[0] if dates else None,
+            'latest': dates[-1] if dates else None,
+        },
+    }
+
+
+def _print_stats_report(records: list[dict[str, Any]]) -> None:
+    summary = _build_report_summary(records)
+
+    print('\n' + '=' * 60)
+    print('BACKUP STATS')
+    print('=' * 60)
+    print(f'Total files : {summary["total_files"]}')
+    print(f'Total size  : {_format_size(summary["total_size_bytes"])}')
+    print(f'Date range  : {summary["date_range"]["earliest"] or "—"} → {summary["date_range"]["latest"] or "—"}')
+
+    print('\nFiles by type')
+    print('-' * 53)
+    for ftype, count in summary['by_type'].items():
+        print(f'{ftype:<45} {count:>6}')
+
+    print('\nTop contacts/groups')
+    print('-' * 53)
+    for contact, count in list(summary['by_contact'].items())[:20]:
+        print(f'{contact:<45} {count:>6}')
+
+    print('\nFiles by month')
+    print('-' * 53)
+    for month, count in summary['by_month'].items():
+        print(f'{month:<45} {count:>6}')
+    print('=' * 60)
+
+
+def _write_report(report_path: Path, records: list[dict[str, Any]]) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    suffix = report_path.suffix.lower()
+
+    if suffix == '.json':
+        payload = {
+            'summary': _build_report_summary(records),
+            'files': records,
+        }
+        report_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding='utf-8',
+        )
+    elif suffix == '.csv':
+        fieldnames = [
+            'status',
+            'contact',
+            'jid',
+            'type',
+            'date',
+            'month',
+            'size',
+            'direction',
+            'source',
+            'destination',
+            'file_id',
+        ]
+        with report_path.open('w', encoding='utf-8', newline='') as f:
+            summary = _build_report_summary(records)
+            writer = csv.writer(f)
+            writer.writerow(['section', 'key', 'value'])
+            writer.writerow(['summary', 'total_files', summary['total_files']])
+            writer.writerow(['summary', 'total_size_bytes', summary['total_size_bytes']])
+            writer.writerow(['summary', 'total_size_gb', summary['total_size_gb']])
+            writer.writerow(['summary', 'date_earliest', summary['date_range']['earliest'] or ''])
+            writer.writerow(['summary', 'date_latest', summary['date_range']['latest'] or ''])
+            for key, value in summary['by_type'].items():
+                writer.writerow(['by_type', key, value])
+            for key, value in summary['by_contact'].items():
+                writer.writerow(['by_contact', key, value])
+            for key, value in summary['by_month'].items():
+                writer.writerow(['by_month', key, value])
+            writer.writerow([])
+            writer.writerow(['files', *fieldnames])
+            for record in records:
+                writer.writerow(['file', *(record.get(field) for field in fieldnames)])
+    else:
+        sys.exit('[ERROR] --report path must end with .json or .csv.')
+
+    print(f'[INFO] Report written         : {report_path}')
+
+
+def _validate_report_path(report_path: Path | None) -> None:
+    if report_path and report_path.suffix.lower() not in ('.json', '.csv'):
+        sys.exit('[ERROR] --report path must end with .json or .csv.')
 
 
 try:
@@ -99,9 +223,13 @@ def extract(
     min_size: int | None = None,
     max_size: int | None = None,
     group_filter: str = 'all',
+    stats_only: bool = False,
+    report_path: Path | None = None,
     password: str | None = None,
     verbose: bool = False,
 ) -> None:
+    _validate_report_path(report_path)
+
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
         sys.exit(f'[ERROR] Manifest.db not found in: {backup_path}')
@@ -110,6 +238,8 @@ def extract(
     print(f'[INFO] Output : {output_dir}')
     if dry_run:
         print('[INFO] DRY-RUN mode — no files will be copied.\n')
+    if stats_only:
+        print('[INFO] STATS-ONLY mode — no files will be copied.\n')
 
     # Encrypted backup: auto-detect and require a password
     encrypted = is_backup_encrypted(backup_path)
@@ -250,8 +380,55 @@ def extract(
 
     print()
 
+    def _media_record(
+        file_id: str,
+        relative_path: str,
+        status: str = 'selected',
+        destination: Path | None = None,
+    ) -> dict[str, Any]:
+        jid = extract_jid(relative_path) or 'unknown'
+        contact_name = contact_map.get(jid, '')
+        original_filename = Path(relative_path).name
+        ext = Path(original_filename).suffix.lower()
+        info = info_map.get(original_filename)
+        ts, direction, msgtype, size = info if info else (None, 'received', 0, None)
+        dt = apple_ts_to_datetime(ts) if ts is not None else None
+
+        if msgtype in GIF_MESSAGE_TYPES and ext == '.mp4':
+            ftype = 'gif'
+        else:
+            ftype = get_file_type(ext) or 'img'
+
+        return {
+            'status': status,
+            'contact': contact_name or jid,
+            'jid': jid,
+            'type': ftype,
+            'date': dt.isoformat() if dt else None,
+            'month': dt.strftime('%Y-%m') if dt else None,
+            'size': size,
+            'direction': direction,
+            'source': relative_path,
+            'destination': str(destination) if destination else None,
+            'file_id': file_id,
+        }
+
+    if stats_only:
+        records = [_media_record(file_id, relative_path) for file_id, relative_path in all_files]
+        _print_stats_report(records)
+        if report_path:
+            _write_report(report_path, records)
+
+        chat_conn.close()
+        manifest_conn.close()
+        os.unlink(tmp_path)
+        if tmp_manifest_path and os.path.exists(tmp_manifest_path):
+            os.unlink(tmp_manifest_path)
+        return
+
     # Counters for the final report
     stats: dict[str, int] = {}
+    report_records: list[dict[str, Any]] = []
     total_bytes = 0
     not_found = 0
     copied = 0
@@ -305,6 +482,7 @@ def extract(
             # Locate the physical file in the backup
             src = backup_path / file_id[:2] / file_id
             if not src.exists():
+                report_records.append(_media_record(file_id, relative_path, 'not_found'))
                 if progress is None:
                     print(' [NOT FOUND]')
                 else:
@@ -314,6 +492,7 @@ def extract(
                 continue
 
             if file_id in seen_file_ids:
+                report_records.append(_media_record(file_id, relative_path, 'duplicate'))
                 if progress is None:
                     print(' [DUPLICATE]')
                 else:
@@ -333,11 +512,13 @@ def extract(
             )
 
             if dry_run:
+                report_records.append(_media_record(file_id, relative_path, 'dry_run', dest))
                 if progress is None:
                     print(f'\n         -> {dest}  (dry-run)')
             elif enc_backup is None and dest.exists() and dest.stat().st_size == src.stat().st_size:
                 skipped += 1
                 seen_file_ids.add(file_id)
+                report_records.append(_media_record(file_id, relative_path, 'skipped', dest))
                 if progress is None:
                     print(' [SKIPPED]')
                 else:
@@ -357,6 +538,9 @@ def extract(
                     shutil.copy2(str(src), str(dest))
                 set_rich_metadata(dest, dt, contact_name, jid, direction, ftype)
                 total_bytes += dest.stat().st_size
+                record = _media_record(file_id, relative_path, 'copied', dest)
+                record['size'] = dest.stat().st_size
+                report_records.append(record)
                 if progress is None:
                     print(f'\n         -> {dest}')
 
@@ -392,3 +576,6 @@ def extract(
     for name, count in sorted(stats.items(), key=lambda x: -x[1]):
         print(f'{name:<45} {count:>6}')
     print('=' * 60)
+
+    if report_path:
+        _write_report(report_path, report_records)

@@ -181,6 +181,8 @@ python3 extract_whatsapp_media.py [options]
 | `--backup PATH` | Path to the iPhone backup folder. Auto-detected if omitted (checks local folder first, then `~/Library/Application Support/MobileSync/Backup/`) |
 | `--output PATH` | Output folder. Default: `./WhatsApp_Media_Export` |
 | `--dry-run` | Simulate the extraction without copying any files. Shows exactly what would be exported |
+| `--stats-only` | Print aggregate backup statistics without copying files or printing every media item |
+| `--report PATH` | Write a structured `.json` or `.csv` report for a stats-only or extraction run |
 | `--inspect-db` | Print the `ChatStorage.sqlite` schema and exit. Useful for debugging or unsupported WhatsApp versions |
 | `--password PASS` | Passphrase for encrypted iPhone backups. Use `--password -` to be prompted interactively (input is hidden and never logged). Requires `iphone-backup-decrypt` |
 
@@ -281,6 +283,12 @@ single column layout. It also accepts Android 11+ media paths such as
   the per-file output during real extractions. Dry-run always keeps the
   per-line preview so you can audit the plan. Install with
   `pip3 install tqdm --break-system-packages`.
+- **Stats-only report** — `--stats-only` prints totals by type, contact and
+  month without copying files. Combine it with `--report report.json` or
+  `--report report.csv` to save structured data for later analysis.
+- **Extraction report** — `--report` also works during real extractions and
+  records each file's status (`copied`, `skipped`, `duplicate`, `not_found`,
+  or `dry_run`), contact, JID, type, date, size, direction and destination.
 
 ---
 
@@ -292,6 +300,12 @@ python3 extract_whatsapp_media.py
 
 # Dry run — preview without copying anything
 python3 extract_whatsapp_media.py --dry-run
+
+# Backup statistics only
+python3 extract_whatsapp_media.py --stats-only
+
+# Save backup statistics as JSON
+python3 extract_whatsapp_media.py --stats-only --report report.json
 
 # Extract only photos and videos
 python3 extract_whatsapp_media.py --type img video
@@ -340,6 +354,9 @@ python3 extract_whatsapp_media.py --type doc
 
 # Custom output folder
 python3 extract_whatsapp_media.py --output ~/Desktop/MyWhatsAppExport
+
+# Save a CSV report while extracting
+python3 extract_whatsapp_media.py --report report.csv
 
 # Android local WhatsApp folder
 python3 extract_android.py --platform android --backup /path/to/WhatsApp --output ./out

@@ -69,45 +69,49 @@ def load_contact_map(chat_conn: sqlite3.Connection) -> dict[str, str]:
 # Message info
 # ---------------------------------------------------------------------------
 
-def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, str, int]]:
+def load_message_info(chat_conn: sqlite3.Connection) -> dict[str, tuple[float, str, int, int | None]]:
     """
-    Returns {filename: (apple_timestamp, direction, message_type)} where:
+    Returns {filename: (apple_timestamp, direction, message_type, file_size)} where:
       - direction    : 'sent' or 'received'
       - message_type : ZMESSAGETYPE value (1=image, 3=video, 15=gif, 7=doc, etc.)
+      - file_size    : byte size from ZWAMEDIAITEM.ZFILESIZE when available
 
     Strategy 1: JOIN ZWAMEDIAITEM -> ZWAMESSAGE (accurate date + direction + type).
     Strategy 2: ZMEDIAURLDATE directly from ZWAMEDIAITEM as a fallback.
     """
-    info_map: dict[str, tuple[float, str, int]] = {}
+    info_map: dict[str, tuple[float, str, int, int | None]] = {}
+    media_columns = set(_table_columns(chat_conn, 'ZWAMEDIAITEM'))
+    size_expr = 'mi.ZFILESIZE' if 'ZFILESIZE' in media_columns else 'NULL'
+    direct_size_expr = 'ZFILESIZE' if 'ZFILESIZE' in media_columns else 'NULL'
 
     # Strategy 1: JOIN for date, direction and message type
     try:
-        rows = chat_conn.execute("""
-            SELECT mi.ZMEDIALOCALPATH, m.ZMESSAGEDATE, m.ZISFROMME, m.ZMESSAGETYPE
+        rows = chat_conn.execute(f"""
+            SELECT mi.ZMEDIALOCALPATH, m.ZMESSAGEDATE, m.ZISFROMME, m.ZMESSAGETYPE, {size_expr}
             FROM ZWAMEDIAITEM mi
             JOIN ZWAMESSAGE m ON mi.ZMESSAGE = m.Z_PK
             WHERE mi.ZMEDIALOCALPATH IS NOT NULL
               AND m.ZMESSAGEDATE IS NOT NULL
         """).fetchall()
-        for path, ts, fromme, msgtype in rows:
+        for path, ts, fromme, msgtype, size in rows:
             fname = Path(path).name
             if fname:
-                info_map[fname] = (ts, 'sent' if fromme else 'received', msgtype or 0)
+                info_map[fname] = (ts, 'sent' if fromme else 'received', msgtype or 0, size)
     except sqlite3.OperationalError:
         pass
 
     # Strategy 2: direct ZMEDIAURLDATE (no JOIN, no direction/type info)
     try:
-        rows = chat_conn.execute("""
-            SELECT ZMEDIALOCALPATH, ZMEDIAURLDATE
+        rows = chat_conn.execute(f"""
+            SELECT ZMEDIALOCALPATH, ZMEDIAURLDATE, {direct_size_expr}
             FROM ZWAMEDIAITEM
             WHERE ZMEDIALOCALPATH IS NOT NULL
               AND ZMEDIAURLDATE IS NOT NULL
         """).fetchall()
-        for path, ts in rows:
+        for path, ts, size in rows:
             fname = Path(path).name
             if fname and fname not in info_map:
-                info_map[fname] = (ts, 'received', 0)
+                info_map[fname] = (ts, 'received', 0, size)
     except sqlite3.OperationalError:
         pass
 

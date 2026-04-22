@@ -191,6 +191,10 @@ python3 extract_whatsapp_media.py [options]
 | `--contact NAME` | Extract only files from contacts/groups whose name contains `NAME` (case-insensitive, partial match). Example: `--contact "John"` |
 | `--from YYYY-MM-DD` | Extract only files sent on or after this date. Example: `--from 2023-01-01` |
 | `--to YYYY-MM-DD` | Extract only files sent on or before this date (inclusive of full day). Example: `--to 2023-12-31` |
+| `--min-size SIZE` | Extract only files at least this size. Accepts bare KB or units like `500kb`, `10mb`, `1gb` |
+| `--max-size SIZE` | Extract only files at most this size. Accepts bare KB or units like `200kb`, `5mb`, `1gb` |
+| `--no-group` | Exclude group chats and export personal chats only |
+| `--only-group` / `--group` | Export group chats only. Can be combined with `--contact` for a specific group |
 | `--file FILE_ID` | Extract a single file by its SHA1 `fileID` from `Manifest.db` (prefix match supported) |
 
 ### File Types
@@ -306,6 +310,21 @@ python3 extract_whatsapp_media.py --from 2023-01-01 --to 2023-12-31
 
 # Extract a specific month from one contact
 python3 extract_whatsapp_media.py --contact "John" --from 2024-06-01 --to 2024-06-30
+
+# Skip tiny media files
+python3 extract_whatsapp_media.py --min-size 500kb
+
+# Export small files only
+python3 extract_whatsapp_media.py --max-size 200kb
+
+# Personal chats only
+python3 extract_whatsapp_media.py --no-group
+
+# Group chats only
+python3 extract_whatsapp_media.py --only-group
+
+# Specific group
+python3 extract_whatsapp_media.py --only-group --contact "Family"
 
 # Random sample of 10 files for testing
 python3 extract_whatsapp_media.py --random 10 --dry-run

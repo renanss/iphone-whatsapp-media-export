@@ -17,6 +17,19 @@ from .database import inspect_db, load_contact_map, load_message_info, query_med
 from .metadata import set_rich_metadata
 from .utils import apple_ts_to_datetime, extract_jid, get_file_type, phone_from_jid, safe_filename_part, safe_folder_name
 
+
+def _format_size(num_bytes: int | None) -> str:
+    if num_bytes is None:
+        return '—'
+    value = float(num_bytes)
+    for unit in ('bytes', 'KB', 'MB', 'GB'):
+        if value < 1024 or unit == 'GB':
+            if unit == 'bytes':
+                return f'{int(value)} bytes'
+            return f'{value:.1f} {unit}'
+        value /= 1024
+
+
 try:
     from tqdm import tqdm
     HAS_TQDM = True
@@ -83,6 +96,9 @@ def extract(
     file_types: set[str] | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    group_filter: str = 'all',
     password: str | None = None,
     verbose: bool = False,
 ) -> None:
@@ -171,6 +187,37 @@ def extract(
         print(f'[INFO] Date range filter      : {label_from} → {label_to}')
         print(f'[INFO] Files after date filter: {len(all_files)}')
 
+    if min_size is not None or max_size is not None:
+        def _size_in_range(rpath: str) -> bool:
+            info = info_map.get(Path(rpath).name)
+            size = info[3] if info else None
+            if size is None:
+                return False
+            if min_size is not None and size < min_size:
+                return False
+            if max_size is not None and size > max_size:
+                return False
+            return True
+
+        all_files = [(fid, rpath) for fid, rpath in all_files if _size_in_range(rpath)]
+        label_min = _format_size(min_size)
+        label_max = _format_size(max_size)
+        print(f'[INFO] Size range filter      : {label_min} → {label_max}')
+        print(f'[INFO] Files after size filter: {len(all_files)}')
+
+    if group_filter not in ('all', 'exclude', 'only'):
+        sys.exit(f'[ERROR] Invalid group_filter: {group_filter}')
+
+    if group_filter != 'all':
+        want_groups = group_filter == 'only'
+        all_files = [
+            (fid, rpath) for fid, rpath in all_files
+            if ((extract_jid(rpath) or '').endswith('@g.us')) == want_groups
+        ]
+        label = 'groups only' if want_groups else 'personal chats only'
+        print(f'[INFO] Group filter           : {label}')
+        print(f'[INFO] Files after group filter: {len(all_files)}')
+
     # Filter by contact — filter_jids (exact JIDs, from GUI) takes priority
     # over filter_contact (substring name match, from CLI).
     if filter_jids is not None:
@@ -236,7 +283,7 @@ def extract(
             original_filename = Path(relative_path).name
             ext               = Path(original_filename).suffix.lower()
             info              = info_map.get(original_filename)
-            ts, direction, msgtype = info if info else (None, 'received', 0)
+            ts, direction, msgtype, _size = info if info else (None, 'received', 0, None)
             dt                = apple_ts_to_datetime(ts) if ts is not None else None
 
             # Determine file type — GIFs saved as .mp4 by WhatsApp use ZMESSAGETYPE=15

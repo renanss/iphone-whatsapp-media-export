@@ -4,6 +4,7 @@ CLI entry point for extract_whatsapp_media.py
 
 import argparse
 import getpass
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -82,6 +83,26 @@ def main() -> None:
         help='Extract only files on or before this date. Example: --to 2023-12-31'
     )
     parser.add_argument(
+        '--min-size', type=str, default=None,
+        metavar='SIZE',
+        help='Extract only files at least this size. Examples: 500kb, 10mb'
+    )
+    parser.add_argument(
+        '--max-size', type=str, default=None,
+        metavar='SIZE',
+        help='Extract only files at most this size. Examples: 200kb, 2mb'
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        '--no-group', action='store_true',
+        help='Exclude group chats and extract personal chats only'
+    )
+    group.add_argument(
+        '--only-group', '--group', action='store_true',
+        dest='only_group',
+        help='Extract group chats only'
+    )
+    parser.add_argument(
         '--inspect-db', action='store_true',
         help='Print the ChatStorage.sqlite schema and exit (useful for debugging)'
     )
@@ -114,6 +135,40 @@ def main() -> None:
 
     if date_from and date_to and date_from > date_to:
         sys.exit('[ERROR] --from date cannot be after --to date.')
+
+    def _parse_size(value: str, param: str) -> int:
+        match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*([kmgt]?b?)?\s*', value, re.IGNORECASE)
+        if not match:
+            sys.exit(f'[ERROR] Invalid size for {param}: "{value}". Use values like 500kb or 10mb.')
+        number = float(match.group(1))
+        unit = (match.group(2) or 'kb').lower()
+        multipliers = {
+            'b': 1,
+            '': 1,
+            'k': 1024,
+            'kb': 1024,
+            'm': 1024 ** 2,
+            'mb': 1024 ** 2,
+            'g': 1024 ** 3,
+            'gb': 1024 ** 3,
+            't': 1024 ** 4,
+            'tb': 1024 ** 4,
+        }
+        if unit not in multipliers:
+            sys.exit(f'[ERROR] Invalid size unit for {param}: "{unit}". Use b, kb, mb, gb, or tb.')
+        return int(number * multipliers[unit])
+
+    min_size = _parse_size(args.min_size, '--min-size') if args.min_size else None
+    max_size = _parse_size(args.max_size, '--max-size') if args.max_size else None
+
+    if min_size is not None and max_size is not None and min_size > max_size:
+        sys.exit('[ERROR] --min-size cannot be greater than --max-size.')
+
+    group_filter = 'all'
+    if args.no_group:
+        group_filter = 'exclude'
+    elif args.only_group:
+        group_filter = 'only'
 
     if not args.file_types:
         file_types = set(DEFAULT_TYPES)
@@ -154,6 +209,9 @@ def main() -> None:
         file_types=file_types,
         date_from=date_from,
         date_to=date_to,
+        min_size=min_size,
+        max_size=max_size,
+        group_filter=group_filter,
         password=password,
     )
 

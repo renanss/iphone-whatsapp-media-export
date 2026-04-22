@@ -1,7 +1,7 @@
 # QA — `--stats-only`: Backup Report Without Extracting
 
 **Branch:** `feature/stats-report-export`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/TBD
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/7
 **Dev completed by:** Agent 2
 
 ---

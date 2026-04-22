@@ -1,7 +1,7 @@
 # QA — `--min-size` / `--max-size`: Filter by File Size
 
 **Branch:** `feature/size-group-filters`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/TBD
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/6
 **Dev completed by:** Agent 2
 
 ---

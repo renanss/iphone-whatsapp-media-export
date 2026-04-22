@@ -1,7 +1,7 @@
 # QA — `--group` / `--no-group`: Include or Exclude Group Chats
 
 **Branch:** `feature/size-group-filters`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/TBD
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/6
 **Dev completed by:** Agent 2
 
 ---

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, font, scrolledtext, ttk
@@ -63,6 +64,7 @@ class App(tk.Tk):
         self._contacts_data: list[tuple]     = []   # (display_name, jid, count)
         self._contacts_filtered: list[tuple] = []   # currently shown subset
         self._selected_jids: set[str]        = set() # JIDs chosen from the list
+        self._last_report_path: Path | None  = None
 
         self._build_ui()
         self._auto_detect_backup()
@@ -162,6 +164,26 @@ class App(tk.Tk):
         self._dryrun_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts_frame, text='Dry run (simulate — no files copied)',
                         variable=self._dryrun_var).pack(side='left')
+
+        self._stats_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opts_frame, text='Stats only (no file copy)',
+                        variable=self._stats_only_var).pack(side='left', padx=(12, 0))
+
+        # ── Report output ─────────────────────────────────────────────
+        report_frame = ttk.LabelFrame(parent, text=' Report ', padding=8)
+        report_frame.pack(fill='x', **pad)
+        report_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(report_frame, text='Report file:').grid(row=0, column=0, sticky='w')
+        self._report_var = tk.StringVar()
+        ttk.Entry(report_frame, textvariable=self._report_var).grid(
+            row=0, column=1, sticky='ew', padx=6)
+        ttk.Button(report_frame, text='Browse…', command=self._browse_report).grid(
+            row=0, column=2)
+
+        self._open_report_btn = ttk.Button(
+            report_frame, text='Open report', command=self._open_report, state='disabled')
+        self._open_report_btn.grid(row=0, column=3, padx=(6, 0))
 
         # ── Run / Stop ─────────────────────────────────────────────────
         btn_frame = ttk.Frame(parent)
@@ -283,6 +305,22 @@ class App(tk.Tk):
         path = filedialog.askdirectory(title='Select output folder')
         if path:
             self._output_var.set(path)
+
+    def _browse_report(self) -> None:
+        output = self._output_var.get().strip()
+        path = filedialog.asksaveasfilename(
+            title='Save report as',
+            initialdir=output if output else str(Path.home()),
+            initialfile='whatsapp_report.json',
+            defaultextension='.json',
+            filetypes=(
+                ('JSON report', '*.json'),
+                ('CSV report', '*.csv'),
+                ('All files', '*.*'),
+            ),
+        )
+        if path:
+            self._report_var.set(path)
 
     # ------------------------------------------------------------------
     # Contact list — load + filter + select
@@ -455,16 +493,25 @@ class App(tk.Tk):
         filter_jids   = self._selected_jids if self._selected_jids else None
         filter_contact = None if filter_jids else (self._contact_var.get().strip() or None)
         dry_run = self._dryrun_var.get()
+        stats_only = self._stats_only_var.get()
+        report_str = self._report_var.get().strip()
+        report_path = Path(report_str) if report_str else None
+        if report_path and report_path.suffix.lower() not in ('.json', '.csv'):
+            self._log_append('[ERROR] Report file must end with .json or .csv.\n', 'error')
+            return
 
         self._running = True
         self._run_btn.config(state='disabled')
         self._stop_btn.config(state='normal')
+        self._open_report_btn.config(state='disabled')
+        self._last_report_path = None
         self._status_var.set('Running…')
 
         self._thread = threading.Thread(
             target=self._run_extract,
             args=(Path(backup_str), Path(output_str),
-                  dry_run, filter_contact, filter_jids, file_types, date_from, date_to),
+                  dry_run, stats_only, report_path,
+                  filter_contact, filter_jids, file_types, date_from, date_to),
             daemon=True,
         )
         self._thread.start()
@@ -474,6 +521,8 @@ class App(tk.Tk):
         backup_path: Path,
         output_dir: Path,
         dry_run: bool,
+        stats_only: bool,
+        report_path: Path | None,
         filter_contact: str | None,
         filter_jids: set[str] | None,
         file_types: set[str],
@@ -489,6 +538,8 @@ class App(tk.Tk):
                 backup_path=backup_path,
                 output_dir=output_dir,
                 dry_run=dry_run,
+                stats_only=stats_only,
+                report_path=report_path,
                 filter_contact=filter_contact,
                 filter_jids=filter_jids,
                 file_types=file_types,
@@ -501,6 +552,8 @@ class App(tk.Tk):
             self._log_queue.put(f'[ERROR] Unexpected error: {e}\n')
         finally:
             sys.stdout, sys.stderr = old_out, old_err
+            if report_path and report_path.exists():
+                self._last_report_path = report_path
             self._log_queue.put(None)  # sentinel → done
 
     def _stop(self) -> None:
@@ -531,6 +584,12 @@ class App(tk.Tk):
         self._log.delete('1.0', 'end')
         self._log.config(state='disabled')
 
+    def _open_report(self) -> None:
+        if not self._last_report_path or not self._last_report_path.exists():
+            self._log_append('[ERROR] No report file is available to open.\n', 'error')
+            return
+        webbrowser.open(self._last_report_path.resolve().as_uri())
+
     def _poll_log(self) -> None:
         try:
             while True:
@@ -539,6 +598,8 @@ class App(tk.Tk):
                     self._running = False
                     self._run_btn.config(state='normal')
                     self._stop_btn.config(state='disabled')
+                    if self._last_report_path and self._last_report_path.exists():
+                        self._open_report_btn.config(state='normal')
                     self._status_var.set('Done.')
                 else:
                     self._log_append(item, self._tag_for_line(item))

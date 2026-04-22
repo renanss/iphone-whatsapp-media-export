@@ -141,6 +141,8 @@ python3 gui.py
 | Date range | From / To fields with YYYY-MM-DD validation |
 | File type toggles | Checkboxes matching CLI defaults (gif and webp opt-in) |
 | Dry run | Toggle to preview without copying any files |
+| Stats only | Print aggregate backup stats without copying files |
+| Report export | Pick a `.json` or `.csv` report file and open it after the run |
 | Live log | Colour-coded output (info, progress, warning, error) streamed in real time |
 | Non-blocking | Extraction runs in a background thread — window stays responsive |
 

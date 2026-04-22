@@ -1,7 +1,7 @@
 # QA — Encrypted backup support
 
 **Branch:** `feature/encrypted-backup`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/<N>
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/4
 **Dev completed by:** Agent 1 (Claude)
 
 ---

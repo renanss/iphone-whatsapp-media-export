@@ -11,8 +11,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from .backup import find_backup_path, find_chatstorage
-from .constants import DOCS_FOLDER, FILE_TYPES, GIF_MESSAGE_TYPES
+from .backup import find_backup_path, find_chatstorage, is_backup_encrypted, open_encrypted_backup
+from .constants import DOCS_FOLDER, FILE_TYPES, GIF_MESSAGE_TYPES, WHATSAPP_DOMAIN
 from .database import inspect_db, load_contact_map, load_message_info, query_media_files
 from .metadata import set_rich_metadata
 from .utils import apple_ts_to_datetime, extract_jid, get_file_type, phone_from_jid, safe_filename_part, safe_folder_name
@@ -75,6 +75,7 @@ def extract(
     file_types: set[str] | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    password: str | None = None,
 ) -> None:
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
@@ -85,13 +86,45 @@ def extract(
     if dry_run:
         print('[INFO] DRY-RUN mode — no files will be copied.\n')
 
-    manifest_conn = sqlite3.connect(str(manifest_db))
+    # Encrypted backup: auto-detect and require a password
+    encrypted = is_backup_encrypted(backup_path)
+    enc_backup = None
+    tmp_manifest_path: str | None = None
+
+    if encrypted and not password:
+        sys.exit(
+            '[ERROR] This backup is encrypted. Pass --password <your iTunes passphrase>.'
+        )
+    if password and not encrypted:
+        print('[WARNING] --password given but backup does not appear encrypted; ignoring.\n')
+        password = None
+
+    if password:
+        print('[INFO] Encrypted backup — decrypting (this may be slow on large backups).')
+        enc_backup = open_encrypted_backup(backup_path, password)
+        # Decrypt Manifest.db to a temp file so the rest of the code can
+        # continue to read it with plain sqlite3.
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+            tmp_manifest_path = tmp.name
+        enc_backup.save_manifest_file(tmp_manifest_path)
+        manifest_conn = sqlite3.connect(tmp_manifest_path)
+    else:
+        manifest_conn = sqlite3.connect(str(manifest_db))
 
     # Copy ChatStorage to a temp file to avoid locking the backup
-    chatstorage_src = find_chatstorage(manifest_conn, backup_path)
     with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
         tmp_path = tmp.name
-    shutil.copy2(str(chatstorage_src), tmp_path)
+
+    if enc_backup is not None:
+        # Decrypt ChatStorage.sqlite directly into the tmp path
+        enc_backup.extract_file(
+            relative_path='ChatStorage.sqlite',
+            domain_like=WHATSAPP_DOMAIN,
+            output_filename=tmp_path,
+        )
+    else:
+        chatstorage_src = find_chatstorage(manifest_conn, backup_path)
+        shutil.copy2(str(chatstorage_src), tmp_path)
 
     chat_conn = sqlite3.connect(tmp_path)
 
@@ -200,7 +233,15 @@ def extract(
             print(f'\n         -> {dest}  (dry-run)')
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(src), str(dest))
+            if enc_backup is not None:
+                # Decrypt directly to the destination path
+                enc_backup.extract_file(
+                    relative_path=relative_path,
+                    domain_like=WHATSAPP_DOMAIN,
+                    output_filename=str(dest),
+                )
+            else:
+                shutil.copy2(str(src), str(dest))
             set_rich_metadata(dest, dt, contact_name, jid, direction, ftype)
             total_bytes += dest.stat().st_size
             print(f'\n         -> {dest}')
@@ -212,6 +253,8 @@ def extract(
     chat_conn.close()
     manifest_conn.close()
     os.unlink(tmp_path)
+    if tmp_manifest_path and os.path.exists(tmp_manifest_path):
+        os.unlink(tmp_manifest_path)
 
     # Final report
     print('\n' + '=' * 60)

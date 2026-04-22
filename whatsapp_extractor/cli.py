@@ -3,6 +3,7 @@ CLI entry point for extract_whatsapp_media.py
 """
 
 import argparse
+import getpass
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +85,15 @@ def main() -> None:
         '--inspect-db', action='store_true',
         help='Print the ChatStorage.sqlite schema and exit (useful for debugging)'
     )
+    parser.add_argument(
+        '--password', type=str, default=None,
+        metavar='PASSPHRASE',
+        help=(
+            'Passphrase for encrypted iPhone backups. '
+            'Use "-" to be prompted interactively (password is never logged). '
+            'Requires: pip3 install iphone-backup-decrypt'
+        )
+    )
 
     args = parser.parse_args()
 
@@ -121,6 +131,13 @@ def main() -> None:
 
     backup_path = args.backup or find_backup_path()
 
+    # Resolve password: "-" means prompt interactively
+    password = args.password
+    if password == '-':
+        password = getpass.getpass('Backup passphrase: ')
+        if not password:
+            sys.exit('[ERROR] Empty passphrase.')
+
     if not HAS_PIEXIF:
         print('[WARNING] piexif is not installed — EXIF fields will not be written.')
         print('          Install with: pip3 install piexif')
@@ -137,6 +154,7 @@ def main() -> None:
         file_types=file_types,
         date_from=date_from,
         date_to=date_to,
+        password=password,
     )
 
 

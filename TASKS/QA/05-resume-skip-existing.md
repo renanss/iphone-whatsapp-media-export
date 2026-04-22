@@ -1,7 +1,7 @@
 # QA — Resume: Skip Already Extracted Files
 
 **Branch:** `feature/loop-03-05-09`
-**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/TBD
+**PR:** https://github.com/renanss/iphone-whatsapp-media-export/pull/5
 **Dev completed by:** Agent 2
 
 ---

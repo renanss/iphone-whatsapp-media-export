@@ -19,11 +19,33 @@ Extract, organize, and archive your WhatsApp media from local iPhone backups or 
 - Corrects **filesystem timestamps** to the original message date
 - Marks media as **sent** or **received**
 - **Documents are isolated** in a `_Documents/` folder so iCloud Photos imports stay clean
+- **Incremental extraction** with `--since-last-run`
+- **Stats-only mode** and structured `.json` / `.csv` reports for iPhone backups
 - **Resume-safe**: re-runs skip files that already exist with matching size
-- **Duplicate detection**: repeated `fileID`s (forwards) are only copied once
-- **Live progress bar** when `tqdm` is installed (falls back to line output otherwise)
+- **Duplicate detection** for repeated iPhone backup `fileID`s
+- **Live progress bar** for iPhone extraction when `tqdm` is installed
 - Supports **dry-run**, **date range**, **random sampling**, **contact filter**, **type filter** and more
 - **Graphical interface** (`gui.py`) for iPhone backups — zero extra dependencies
+
+---
+
+## ✅ Platform Support
+
+| Capability | iPhone CLI | Android CLI | GUI |
+|---|---:|---:|---:|
+| Media extraction | ✅ | ✅ | ✅ iPhone only |
+| Contact/date/type/random filters | ✅ | ✅ | ✅ iPhone only |
+| `--since-last-run` incremental mode | ✅ | ✅ | — |
+| Rich metadata + timestamps | ✅ | ✅ | ✅ iPhone only |
+| Encrypted backup support | ✅ | N/A | — |
+| Stats-only and JSON/CSV reports | ✅ | — | ✅ iPhone only |
+| Size filters and group-only filters | ✅ | — | — |
+| Duplicate `fileID` detection | ✅ | — | ✅ iPhone only |
+| `list_contacts.py` contact counts | ✅ | — | — |
+
+Android support expects an already accessible WhatsApp folder with a readable
+SQLite `msgstore.db`. Encrypted Android database exports such as
+`msgstore.db.crypt12`, `.crypt14`, or `.crypt15` are not decrypted by this tool.
 
 ---
 
@@ -31,7 +53,7 @@ Extract, organize, and archive your WhatsApp media from local iPhone backups or 
 
 - **macOS, Windows or Linux**
 - For iPhone: local backup via Finder / iTunes (encrypted backups supported via `--password`)
-- For Android: a local copy of the WhatsApp folder containing `msgstore.db` and `Media/`
+- For Android: a local copy of the WhatsApp folder containing a readable `msgstore.db` and `Media/`
 - Python 3.10+
 - Optional but recommended:
   - [`piexif`](https://pypi.org/project/piexif/) for EXIF writing
@@ -57,7 +79,10 @@ pip3 install iphone-backup-decrypt --break-system-packages
 
 For iPhone, open **Finder → your iPhone → Back Up Now**. Encrypted backups are fully supported — just pass `--password` (or `--password -` to be prompted) when running the extractor.
 
-For Android, copy the WhatsApp folder locally. The folder should contain `msgstore.db` and `Media/`.
+For Android, copy the WhatsApp folder locally. The folder should contain
+`msgstore.db` and `Media/`. If you only have `msgstore.db.crypt12`,
+`msgstore.db.crypt14`, or `msgstore.db.crypt15`, decrypt it first with a
+separate Android backup/decryption tool.
 
 ### 2. Clone the repository
 
@@ -82,7 +107,9 @@ For iPhone backups, this shows all contacts and groups with their media counts, 
 python3 gui.py
 ```
 
-The GUI auto-detects iPhone backups when possible, lets you browse contacts, apply filters, export reports, and watch the live log — no terminal knowledge needed.
+The GUI is for iPhone backups. It auto-detects backups when possible, lets you
+browse contacts, apply filters, export reports, and watch the live log — no
+terminal knowledge needed.
 
 **Option B — iPhone command line:**
 
@@ -107,6 +134,7 @@ python3 extract_android.py --platform android --backup /path/to/WhatsApp --outpu
 
 ```
 WhatsApp_Media_Export/
+├── .whatsapp_export_state.json   ← created by --since-last-run after successful runs
 ├── John_Smith/
 │   ├── 2023-03/
 │   │   ├── John_Smith_15519999999_2023-03-15_14-30-22.jpg
@@ -256,7 +284,9 @@ WhatsApp/
 `msgstore.db` schemas vary between WhatsApp Android versions, so the extractor
 inspects the `messages` and `chat_list` tables at runtime instead of assuming a
 single column layout. It also accepts Android 11+ media paths such as
-`Android/media/com.whatsapp/WhatsApp/Media/...`.
+`Android/media/com.whatsapp/WhatsApp/Media/...`. If a database layout is not
+recognized, run with `--inspect-db` and include that output when reporting the
+issue.
 
 | Option | Description |
 |---|---|
@@ -275,29 +305,33 @@ single column layout. It also accepts Android 11+ media paths such as
 
 ---
 
-## 🔁 Resume, Duplicates & Progress
+## 🔁 Resume, Incremental Runs & Reports
 
 - **Resume-safe re-runs** — if the same `--output` path already contains a
   file whose size matches the source, it is logged as `[SKIPPED]` and not
   re-copied. If the size differs (e.g. truncated or corrupted file), it is
-  re-copied. The final report shows a `Skipped` counter.
+  re-copied. This currently applies to iPhone extraction.
 - **Incremental runs** — add `--since-last-run` to resume from the timestamp
   saved in `<output>/.whatsapp_export_state.json`. The state file is updated
   only after successful non-dry-run extraction, so preview runs are safe.
+  Supported by both iPhone and Android CLI extractors.
 - **Duplicate detection** — WhatsApp stores forwarded media under the same
   `fileID`. Each `fileID` is copied at most once per run; repeats are
   logged as `[DUPLICATE]` and shown in the final report as
-  `Duplicates skipped`.
+  `Duplicates skipped`. This is iPhone-specific because Android media is copied
+  directly from filesystem paths rather than iOS backup `fileID`s.
 - **Progress bar** — if `tqdm` is installed, a live progress bar replaces
-  the per-file output during real extractions. Dry-run always keeps the
+  the per-file output during iPhone real extractions. Dry-run always keeps the
   per-line preview so you can audit the plan. Install with
   `pip3 install tqdm --break-system-packages`.
 - **Stats-only report** — `--stats-only` prints totals by type, contact and
-  month without copying files. Combine it with `--report report.json` or
-  `--report report.csv` to save structured data for later analysis.
+  month without copying files in the iPhone extractor. Combine it with
+  `--report report.json` or `--report report.csv` to save structured data for
+  later analysis.
 - **Extraction report** — `--report` also works during real extractions and
   records each file's status (`copied`, `skipped`, `duplicate`, `not_found`,
   or `dry_run`), contact, JID, type, date, size, direction and destination.
+  Report export is currently iPhone-only.
 
 ---
 
@@ -423,6 +457,7 @@ For Android folders, media files are already present under `Media/`. The Android
 2. Reads `wa.db` when available for contact names
 3. Resolves media files directly from the local WhatsApp `Media/` tree
 4. Reuses the same output structure, naming rules and metadata writer as the iPhone extractor
+5. Can resume from `.whatsapp_export_state.json` with `--since-last-run`
 
 ---
 
@@ -443,6 +478,7 @@ To free up space on your phone after verifying the export:
 
 - This tool only reads from your backup or copied WhatsApp folder — it never modifies your phone or WhatsApp data
 - Works with **both encrypted and unencrypted** iPhone backups; encrypted backups need `iphone-backup-decrypt` and `--password`
+- Android support requires a readable/decrypted `msgstore.db`; encrypted `.crypt*` databases are not decrypted here
 - Passwords are read via `getpass` when using `--password -`, never printed, logged, or persisted
 - Tested on macOS with Python 3.13/3.14 and WhatsApp backups from 2017–2025
 - The Apple timestamp epoch starts at `2001-01-01 00:00:00 UTC` (not Unix epoch)

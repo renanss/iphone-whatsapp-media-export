@@ -13,6 +13,7 @@ from .backup import find_backup_path
 from .constants import FILE_TYPES, DEFAULT_TYPES
 from .extractor import extract
 from .metadata import HAS_PIEXIF
+from .state import load_last_run
 
 
 def main() -> None:
@@ -79,11 +80,16 @@ def main() -> None:
             'Example: --exclude-type gif audio'
         )
     )
-    parser.add_argument(
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument(
         '--from', type=str, default=None,
         metavar='YYYY-MM-DD',
         dest='date_from',
         help='Extract only files on or after this date. Example: --from 2023-01-01'
+    )
+    date_group.add_argument(
+        '--since-last-run', action='store_true',
+        help='Resume from the last successful extraction recorded in the output folder'
     )
     parser.add_argument(
         '--to', type=str, default=None,
@@ -138,6 +144,17 @@ def main() -> None:
             sys.exit(f'[ERROR] Invalid date for {param}: "{value}". Use YYYY-MM-DD format.')
 
     date_from = _parse_date(args.date_from, '--from') if args.date_from else None
+    if args.since_last_run:
+        try:
+            date_from = load_last_run(args.output)
+        except ValueError as exc:
+            sys.exit(f'[ERROR] {exc}')
+
+        if date_from:
+            print(f'[INFO] Resuming from last run: {date_from.strftime("%Y-%m-%d")}')
+        else:
+            print('[INFO] No previous run state found; extracting from the beginning.')
+
     date_to   = _parse_date(args.date_to,   '--to'  ).replace(
         hour=23, minute=59, second=59
     ) if args.date_to else None
@@ -224,6 +241,7 @@ def main() -> None:
         stats_only=args.stats_only,
         report_path=args.report,
         password=password,
+        update_state=args.since_last_run,
     )
 
 

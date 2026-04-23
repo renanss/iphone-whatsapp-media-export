@@ -187,6 +187,7 @@ python3 extract_whatsapp_media.py [options]
 | `--dry-run` | Simulate the extraction without copying any files. Shows exactly what would be exported |
 | `--stats-only` | Print aggregate backup statistics without copying files or printing every media item |
 | `--report PATH` | Write a structured `.json` or `.csv` report for a stats-only or extraction run |
+| `--since-last-run` | Read `.whatsapp_export_state.json` from the output folder and resume from the last successful extraction date |
 | `--inspect-db` | Print the `ChatStorage.sqlite` schema and exit. Useful for debugging or unsupported WhatsApp versions |
 | `--password PASS` | Passphrase for encrypted iPhone backups. Use `--password -` to be prompted interactively (input is hidden and never logged). Requires `iphone-backup-decrypt` |
 
@@ -263,6 +264,7 @@ single column layout. It also accepts Android 11+ media paths such as
 | `--backup PATH` | Required path to the Android WhatsApp folder or local copy |
 | `--output PATH` | Output folder. Default: `./WhatsApp_Media_Export` |
 | `--dry-run` | Preview matched media and destination paths without copying files |
+| `--since-last-run` | Read `.whatsapp_export_state.json` from the output folder and resume from the last successful extraction date |
 | `--contact NAME` | Extract contacts/groups whose display name or raw JID contains `NAME` |
 | `--from YYYY-MM-DD` | Extract only media on or after this date |
 | `--to YYYY-MM-DD` | Extract only media on or before this date |
@@ -279,6 +281,9 @@ single column layout. It also accepts Android 11+ media paths such as
   file whose size matches the source, it is logged as `[SKIPPED]` and not
   re-copied. If the size differs (e.g. truncated or corrupted file), it is
   re-copied. The final report shows a `Skipped` counter.
+- **Incremental runs** — add `--since-last-run` to resume from the timestamp
+  saved in `<output>/.whatsapp_export_state.json`. The state file is updated
+  only after successful non-dry-run extraction, so preview runs are safe.
 - **Duplicate detection** — WhatsApp stores forwarded media under the same
   `fileID`. Each `fileID` is copied at most once per run; repeats are
   logged as `[DUPLICATE]` and shown in the final report as
@@ -326,6 +331,9 @@ python3 extract_whatsapp_media.py --contact "John"
 # Extract a specific year
 python3 extract_whatsapp_media.py --from 2023-01-01 --to 2023-12-31
 
+# Extract only media added since the last successful run
+python3 extract_whatsapp_media.py --since-last-run
+
 # Extract a specific month from one contact
 python3 extract_whatsapp_media.py --contact "John" --from 2024-06-01 --to 2024-06-30
 
@@ -364,6 +372,9 @@ python3 extract_whatsapp_media.py --report report.csv
 
 # Android local WhatsApp folder
 python3 extract_android.py --platform android --backup /path/to/WhatsApp --output ./out
+
+# Android incremental run
+python3 extract_android.py --platform android --backup /path/to/WhatsApp --since-last-run
 ```
 
 ---

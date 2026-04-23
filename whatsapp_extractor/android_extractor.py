@@ -18,6 +18,7 @@ from typing import Any, Iterable
 from .constants import DOCS_FOLDER, DEFAULT_TYPES, FILE_TYPES
 from .extractor import build_dest_path
 from .metadata import HAS_PIEXIF, set_rich_metadata
+from .state import load_last_run, save_last_run
 from .utils import get_file_type
 
 
@@ -398,7 +399,9 @@ def extract_android(
     file_types: set[str] | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    update_state: bool = False,
 ) -> None:
+    run_started_at = datetime.now().astimezone().replace(microsecond=0)
     msgstore_db = _find_database(backup_path, 'msgstore.db')
     if not msgstore_db:
         sys.exit(f'[ERROR] msgstore.db not found under: {backup_path}')
@@ -506,6 +509,10 @@ def extract_android(
         for name, count in sorted(stats.items(), key=lambda item: -item[1]):
             print(f'{name:<45} {count:>6}')
         print('=' * 60)
+
+        if update_state and not dry_run:
+            path = save_last_run(output_dir, run_started_at)
+            print(f'[INFO] State updated : {path}')
     finally:
         msg_conn.close()
 
@@ -548,9 +555,14 @@ def main() -> None:
         choices=list(FILE_TYPES.keys()),
         help='File types to exclude from the selection.'
     )
-    parser.add_argument(
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument(
         '--from', type=str, default=None, metavar='YYYY-MM-DD', dest='date_from',
         help='Extract only files on or after this date.'
+    )
+    date_group.add_argument(
+        '--since-last-run', action='store_true',
+        help='Resume from the last successful extraction recorded in the output folder'
     )
     parser.add_argument(
         '--to', type=str, default=None, metavar='YYYY-MM-DD', dest='date_to',
@@ -574,6 +586,17 @@ def main() -> None:
             sys.exit(f'[ERROR] Invalid date for {param}: "{value}". Use YYYY-MM-DD format.')
 
     date_from = _parse_date(args.date_from, '--from') if args.date_from else None
+    if args.since_last_run:
+        try:
+            date_from = load_last_run(args.output)
+        except ValueError as exc:
+            sys.exit(f'[ERROR] {exc}')
+
+        if date_from:
+            print(f'[INFO] Resuming from last run: {date_from.strftime("%Y-%m-%d")}')
+        else:
+            print('[INFO] No previous run state found; extracting from the beginning.')
+
     date_to = _parse_date(args.date_to, '--to').replace(
         hour=23, minute=59, second=59
     ) if args.date_to else None
@@ -609,6 +632,7 @@ def main() -> None:
         file_types=file_types,
         date_from=date_from,
         date_to=date_to,
+        update_state=args.since_last_run,
     )
 
 

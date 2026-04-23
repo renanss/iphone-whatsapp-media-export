@@ -19,6 +19,7 @@ from .backup import find_backup_path, find_chatstorage, is_backup_encrypted, ope
 from .constants import DOCS_FOLDER, FILE_TYPES, GIF_MESSAGE_TYPES, WHATSAPP_DOMAIN
 from .database import inspect_db, load_contact_map, load_message_info, query_media_files
 from .metadata import set_rich_metadata
+from .state import save_last_run
 from .utils import apple_ts_to_datetime, extract_jid, get_file_type, phone_from_jid, safe_filename_part, safe_folder_name
 
 
@@ -227,8 +228,10 @@ def extract(
     report_path: Path | None = None,
     password: str | None = None,
     verbose: bool = False,
+    update_state: bool = False,
 ) -> None:
     _validate_report_path(report_path)
+    run_started_at = datetime.now().astimezone().replace(microsecond=0)
 
     manifest_db = backup_path / 'Manifest.db'
     if not manifest_db.exists():
@@ -579,3 +582,7 @@ def extract(
 
     if report_path:
         _write_report(report_path, report_records)
+
+    if update_state and not dry_run and not stats_only:
+        path = save_last_run(output_dir, run_started_at)
+        print(f'[INFO] State updated          : {path}')
